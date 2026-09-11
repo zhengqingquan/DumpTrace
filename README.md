@@ -4,7 +4,7 @@
 
 与 [logel2txt](https://github.com/zhengqingquan/logel2txt) **上下游**：时间线复用其 Trace 导出，不重复实现解码。
 
-版本：**0.1.0** · 详见 [CHANGELOG](CHANGELOG.md)
+版本：**0.2.0** · 详见 [CHANGELOG](CHANGELOG.md)
 
 ## 功能
 

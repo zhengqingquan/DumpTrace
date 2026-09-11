@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-11
+
 ### 新增
 
 - P0：从 `.ass` 解析全任务表（`Tasks info` + `Stack info`）、定时器列表（含 Active Threads）、队列水位；导出 `tasks.txt` / `tasks.json` / `timers.txt`，`scene.md` 摘要可疑线程与定时器模块分布。
@@ -15,7 +17,11 @@
 - P3：LogSave/.lst 与现场完整性（`log_meta`）、Fault/指针 `.mem` 窗口（`mem_window.*`）、Fat/NV/iram（`sideband`，无段 skip）；规则 `capture_incomplete` / `logsave_empty` / `fault_addr_unmapped` / `sideband_present` 等。
 - 符号匹配分项检查：`name_token`（文件名片段）、`build_time`（编译时间）、`build_id`（Project Version）、`map_checksum`（同 stem `.map` 入口点 + 摘要指纹）；CLI / `scene.md` 分别提示，overall 写入 `axf_match`。
 - 从 `.ass` 解析内存使用：System/Static 池 Total/Avail/Used、空间段 ALLOC/FREE、Allocated memory info Top；导出 `mem_usage.txt` / `mem_usage.json`，并增加 `oom_assert` / `mem_pressure` 规则。
-- 文档：[能力规划](docs/能力规划.md)（后续可从日志解析项的优先级与验收建议；平台通用，不绑定具体业务）。
+- 文档：[能力规划](docs/能力规划.md)（P0–P3 已落地；平台通用，不绑定具体业务）。
+
+### 变更
+
+- 测试与反查文档示例标识进一步脱敏（`DEMO_*` / `EX####` / `CD9999`）。
 
 ## [0.1.0] - 2026-09-11
 
