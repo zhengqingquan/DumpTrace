@@ -124,6 +124,40 @@ class TestMemWindow(unittest.TestCase):
             )
             self.assertTrue(any(h.id == "fault_addr_unmapped" for h in hits))
 
+    def test_no_fault_uses_high_regs_and_sp(self) -> None:
+        """无 Fault 且 R0–R3 为空时，仍应用 R4/SP 开窗（勿误 skip）。"""
+        with tempfile.TemporaryDirectory() as td:
+            mem = Path(td) / "demo.mem"
+            data = bytearray(0x300)
+            data[0x200] = 0xAB
+            mem.write_bytes(data)
+            report = extract_mem_windows(
+                mem,
+                fault_addr=None,
+                regs={
+                    "R0": "0x0",
+                    "R1": "0x0",
+                    "R2": "0x1",
+                    "R3": "0x1",
+                    "R4": "0x80000200",
+                    "SP": "0x80000100",
+                    "PC": "0x606513d4",
+                    "LR": "0x603d1165",
+                },
+                mem_base="0x80000000",
+                window_bytes=32,
+            )
+            self.assertTrue(report.ok)
+            self.assertFalse(report.skipped)
+            roles = {w.role for w in report.windows if w.ok}
+            self.assertIn("r4", roles)
+            self.assertIn("sp", roles)
+            self.assertNotIn("pc", roles)  # 代码区，不在 .mem
+            r4 = next(w for w in report.windows if w.role == "r4")
+            # center 在窗口中部，不是 data[0]
+            center_off = r4.center - (r4.mem_base + r4.file_offset)
+            self.assertEqual(r4.data[center_off], 0xAB)
+
 
 class TestSideband(unittest.TestCase):
     def test_parse_sections(self) -> None:

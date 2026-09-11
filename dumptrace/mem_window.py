@@ -123,6 +123,33 @@ def _extract_one(
     )
 
 
+# 用于开窗的寄存器键（含高位寄存器与 SP；PC/LR 通常在代码区，落在 .mem 内才保留）
+_REG_WINDOW_KEYS = (
+    "R0",
+    "R1",
+    "R2",
+    "R3",
+    "R4",
+    "R5",
+    "R6",
+    "R7",
+    "R8",
+    "R9",
+    "R10",
+    "R11",
+    "R12",
+    "SP",
+    "LR",
+    "PC",
+    "R13_SVC",
+    "R14_SVC",
+    "R13_IRQ",
+    "R14_IRQ",
+    "R13_ABT",
+    "R14_ABT",
+)
+
+
 def _collect_targets(
     *,
     fault_addr: Optional[str],
@@ -147,7 +174,7 @@ def _collect_targets(
 
     add("fault", fault_addr)
     if regs:
-        for key in ("R0", "R1", "R2", "R3", "PC", "LR", "R13_SVC", "R14_SVC"):
+        for key in _REG_WINDOW_KEYS:
             add(key.lower(), regs.get(key))
     if extra_addrs:
         for role, raw in extra_addrs:
