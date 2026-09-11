@@ -1,0 +1,5 @@
+# DumpTrace — 运行时仅标准库（Python >=3.8）
+# 时间线能力依赖 https://github.com/zhengqingquan/logel2txt（非本文件安装；打包 exe 默认不内嵌）
+
+# 打包成 exe
+pyinstaller>=6.3.0

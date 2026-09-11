@@ -1,0 +1,24 @@
+# DumpTrace 配置示例（复制为 dumptrace.toml 后按需修改）
+
+[tools]
+# addr2line = "D:/path/to/addr2line.exe"
+
+[export]
+copy_ass = false
+bundle = false
+full = false
+strict_symbols = false
+
+[credibility]
+warn_lost_pct = 5.0
+bad_lost_pct = 15.0
+
+[timeline]
+enable = true
+windows_sec = [3, 10, 60]
+keywords = ["camera", "preview", "encode", "stream", "assert", "abort", "T_P_APP", "IMG_", "display"]
+
+[mem]
+enable = true
+base = "0x80000000"
+code_ranges = ["0x60000000-0x62000000"]
