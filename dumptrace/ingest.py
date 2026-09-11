@@ -184,6 +184,7 @@ def ingest(
     add(_entry("mem", _pick_by_suffix(armlog_dir, "_1.mem") or _pick_by_suffix(armlog_dir, ".mem")))
     add(_entry("log_stat", _pick_by_suffix(armlog_dir, "_log_stat.txt")))
     add(_entry("lst", _pick_by_suffix(armlog_dir, ".lst"), usable=True, note="may be small"))
+    add(_entry("iq", _pick_by_suffix(armlog_dir, ".iq")))
 
     axf_path = _find_axf([armlog_dir, root, armlog_dir.parent], explicit=axf)
     if axf_path is None:

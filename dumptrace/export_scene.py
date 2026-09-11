@@ -55,6 +55,9 @@ def build_scene_dict(
     mmi_state: Any = None,
     callbacks: Any = None,
     ps_info: Any = None,
+    log_meta: Any = None,
+    mem_window: Any = None,
+    sideband: Any = None,
 ) -> Dict[str, Any]:
     return {
         "tool": {"name": "dumptrace", "version": __version__},
@@ -95,6 +98,21 @@ def build_scene_dict(
             ps_info.to_dict()
             if ps_info is not None and hasattr(ps_info, "to_dict")
             else ps_info
+        ),
+        "log_meta": (
+            log_meta.to_dict()
+            if log_meta is not None and hasattr(log_meta, "to_dict")
+            else log_meta
+        ),
+        "mem_window": (
+            mem_window.to_dict()
+            if mem_window is not None and hasattr(mem_window, "to_dict")
+            else mem_window
+        ),
+        "sideband": (
+            sideband.to_dict()
+            if sideband is not None and hasattr(sideband, "to_dict")
+            else sideband
         ),
         "warnings": warnings,
     }
@@ -393,9 +411,44 @@ def render_scene_md(data: Dict[str, Any]) -> str:
     else:
         lines.append("- （无）")
 
+    lm = data.get("log_meta") or {}
+    lines += ["", "## 抓取完整性 / LogSave / .lst", ""]
+    if lm.get("ok"):
+        integ = lm.get("integrity") or {}
+        lines.append(
+            f"- complete=`{integ.get('complete')}` gaps=`{integ.get('gaps')}` "
+            f"has_lst=`{integ.get('has_lst')}`"
+        )
+        for c in lm.get("logsave") or []:
+            lines.append(
+                f"  - LogSave `{c.get('name')}`: present=`{c.get('present')}` "
+                f"empty=`{c.get('empty')}` ({c.get('detail')})"
+            )
+        if lm.get("mem_dump"):
+            lines.append(f"- ASS mem dump note: `{lm.get('mem_dump')}`")
+        lines.append("- 详见 `log_meta.txt`")
+    elif lm:
+        lines.append(f"- {lm.get('warnings') or 'n/a'}")
+    else:
+        lines.append("- （无）")
+
+    sb = data.get("sideband") or {}
+    lines += ["", "## Fat / NV / iram", ""]
+    if sb.get("ok"):
+        ov = sb.get("overall") or {}
+        lines.append(f"- present=`{ov.get('present')}`")
+        lines.append("- 详见 `sideband.txt`")
+    elif sb.get("skipped"):
+        lines.append("- （本包未 dump Fat/NV/iram，已跳过）")
+    elif sb:
+        lines.append(f"- {sb.get('warnings') or 'n/a'}")
+    else:
+        lines.append("- （无）")
+
     st = data.get("stack") or {}
     cs = data.get("callstack") or {}
-    lines += ["", "## 栈 / 候选调用栈", ""]
+    mw = data.get("mem_window") or {}
+    lines += ["", "## 栈 / 候选调用栈 / mem 窗口", ""]
     if st.get("ok"):
         lines.append(
             f"- stack `{hex(st.get('stack_start', 0))}`-`{hex(st.get('stack_end', 0))}` "
@@ -405,6 +458,21 @@ def render_scene_md(data: Dict[str, Any]) -> str:
         lines.append(f"- stack 失败: {st.get('error')}")
     else:
         lines.append("- （未启用或无 mem）")
+    if mw.get("ok"):
+        ov = mw.get("overall") or {}
+        lines.append(
+            f"- mem_window: ok=`{ov.get('ok_count')}/{ov.get('requested')}` "
+            f"bytes=`{ov.get('window_bytes')}` → `mem_window.hex`"
+        )
+        for w in (mw.get("windows") or [])[:6]:
+            if w.get("ok"):
+                lines.append(f"  - [{w.get('role')}] `{w.get('addr_hex')}` len={w.get('length')}")
+            else:
+                lines.append(f"  - [{w.get('role')}] fail: {w.get('error')}")
+    elif mw.get("skipped"):
+        lines.append("- mem_window: （跳过）")
+    elif mw:
+        lines.append(f"- mem_window: {mw.get('warnings') or 'n/a'}")
     if cs.get("ok"):
         ok_n = sum(1 for c in (cs.get("candidates") or []) if c.get("ok"))
         lines.append(f"- callstack candidates: {len(cs.get('candidates') or [])}（符号成功 {ok_n}）")
@@ -512,6 +580,9 @@ def export_scene(
     mmi_state: Any = None,
     callbacks: Any = None,
     ps_info: Any = None,
+    log_meta: Any = None,
+    mem_window: Any = None,
+    sideband: Any = None,
     warnings: List[str],
     options: Optional[ExportOptions] = None,
 ) -> Dict[str, Any]:
@@ -535,6 +606,9 @@ def export_scene(
         mmi_state=mmi_state,
         callbacks=callbacks,
         ps_info=ps_info,
+        log_meta=log_meta,
+        mem_window=mem_window,
+        sideband=sideband,
         warnings=warnings,
     )
 
@@ -647,6 +721,27 @@ def export_scene(
         pp = out_dir / "ps_info.txt"
         pp.write_text(render_ps_info_txt(ps_info), encoding="utf-8")
         extra_files.append(pp)
+    if log_meta is not None:
+        from dumptrace.log_meta import render_log_meta_txt
+
+        lp = out_dir / "log_meta.txt"
+        lp.write_text(render_log_meta_txt(log_meta), encoding="utf-8")
+        extra_files.append(lp)
+    if sideband is not None:
+        from dumptrace.sideband import render_sideband_txt
+
+        sbp = out_dir / "sideband.txt"
+        sbp.write_text(render_sideband_txt(sideband), encoding="utf-8")
+        extra_files.append(sbp)
+    if mem_window is not None:
+        from dumptrace.mem_window import render_mem_window_hex, render_mem_window_txt
+
+        mwp = out_dir / "mem_window.txt"
+        mwp.write_text(render_mem_window_txt(mem_window), encoding="utf-8")
+        extra_files.append(mwp)
+        mwh = out_dir / "mem_window.hex"
+        mwh.write_text(render_mem_window_hex(mem_window), encoding="utf-8")
+        extra_files.append(mwh)
     if timeline is not None and getattr(timeline, "ok", False):
         # 可选：按模块聚合 JSON
         tj = out_dir / "timeline_by_module.json"
@@ -716,6 +811,10 @@ def export_scene(
                 "callbacks.json",
                 "ps_info.txt",
                 "timeline_by_module.json",
+                "log_meta.txt",
+                "sideband.txt",
+                "mem_window.txt",
+                "mem_window.hex",
             ):
                 p = out_dir / name
                 if p.is_file():

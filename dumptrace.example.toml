@@ -22,6 +22,11 @@ keywords = ["camera", "preview", "encode", "stream", "assert", "abort", "T_P_APP
 enable = true
 base = "0x80000000"
 code_ranges = ["0x60000000-0x62000000"]
+window_bytes = 256
+
+[sideband]
+# Fat / NV / iram（无段则 skip）
+enable = true
 
 [rtos]
 queue_pressure_pct = 80.0

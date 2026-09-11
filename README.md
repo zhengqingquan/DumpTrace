@@ -20,6 +20,7 @@
 | 同步原语 / MMI | Mutex/Sem/Event 持有与等待（`sync_objects.*`）；MMI 窗体/控件（`mmi_state`） |
 | 回调 / PS | Callback Function List → 符号（`callbacks.*`）；PS 队列/栈（`ps_info`，无段 skip） |
 | 堆加深 | 泄漏嫌疑排序、申请 size vs 最大空闲（`leak_suspects` / `fragmentation`） |
+| 旁路 / 深挖 | LogSave/.lst（`log_meta`）；Fault 附近 mem 窗口；Fat/NV/iram（`sideband`，无段 skip） |
 | Log 可信度 | 读 `*_log_stat.txt`，报告中标注丢包可信度 |
 | 时间线 | 死机前关键字事件 + 模块聚类/主故事线（复用 logel2txt） |
 | MEM 栈深挖 | 栈区切片、疑似返回地址 → 候选调用栈 |
@@ -75,6 +76,9 @@ python dumptrace.py analyze dump_xxx --skip-timeline --skip-mem
 | `mmi_state.txt` | MMI 窗体 / 控件 / 图层 |
 | `callbacks.txt` / `callbacks.json` | Callback Function List（Entry→符号） |
 | `ps_info.txt` | PS 队列 / 调用栈（有则写出） |
+| `log_meta.txt` | LogSave / .lst / 现场完整性 |
+| `sideband.txt` | Fat / NV / iram（有则写出） |
+| `mem_window.txt` / `mem_window.hex` | Fault/指针附近内存窗口 |
 | `evidence/` | 可选证据目录：`--copy-ass` 拷 `.ass`；`--full` 再拷 mem/logel 等 |
 | `../<dump_id>_scene.zip` | `--bundle` 时打在 scene 目录**同级**的现场包 |
 

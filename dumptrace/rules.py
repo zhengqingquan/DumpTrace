@@ -36,6 +36,9 @@ def apply_rules(
     callbacks: Any = None,
     ps_info: Any = None,
     timeline: Any = None,
+    log_meta: Any = None,
+    mem_window: Any = None,
+    sideband: Any = None,
     *,
     queue_pressure_pct: float = 80.0,
     stack_overflow_pct: float = 90.0,
@@ -188,7 +191,150 @@ def apply_rules(
     hits.extend(_ps_rules(ps_info))
     hits.extend(_timeline_rules(timeline))
     hits.extend(_heap_deep_rules(mem_usage))
+    hits.extend(_log_meta_rules(log_meta))
+    hits.extend(_mem_window_rules(mem_window, scene))
+    hits.extend(_sideband_rules(sideband))
     return hits
+
+
+def _log_meta_rules(log_meta: Any) -> List[RuleHit]:
+    if log_meta is None:
+        return []
+    ok = getattr(log_meta, "ok", None)
+    if ok is None and isinstance(log_meta, dict):
+        ok = log_meta.get("ok")
+    if not ok:
+        return []
+    integ = getattr(log_meta, "integrity", None)
+    if integ is None and isinstance(log_meta, dict):
+        integ = log_meta.get("integrity") or {}
+    hits: List[RuleHit] = []
+    gaps = list((integ or {}).get("gaps") or [])
+    if gaps:
+        hits.append(
+            RuleHit(
+                id="capture_incomplete",
+                confidence="medium",
+                message=f"现场抓取不完整: {', '.join(gaps)}",
+                evidence={"gaps": gaps, "integrity": dict(integ or {})},
+            )
+        )
+    empty = list((integ or {}).get("logsave_empty") or [])
+    logsave = getattr(log_meta, "logsave", None)
+    if logsave is None and isinstance(log_meta, dict):
+        logsave = log_meta.get("logsave") or []
+    present_n = sum(
+        1
+        for c in logsave
+        if (getattr(c, "present", None) if not isinstance(c, dict) else c.get("present"))
+    )
+    if empty and present_n and len(empty) >= present_n:
+        hits.append(
+            RuleHit(
+                id="logsave_empty",
+                confidence="low",
+                message=f"Dump LogSave 通道均为空: {', '.join(empty)}",
+                evidence={"logsave_empty": empty},
+            )
+        )
+    lst = getattr(log_meta, "lst", None)
+    if lst is None and isinstance(log_meta, dict):
+        lst = log_meta.get("lst")
+    if lst:
+        hits.append(
+            RuleHit(
+                id="lst_meta_present",
+                confidence="low",
+                message="已解析 .lst 元数据",
+                evidence={
+                    "size": getattr(lst, "size", None)
+                    if not isinstance(lst, dict)
+                    else lst.get("size")
+                },
+            )
+        )
+    return hits
+
+
+def _mem_window_rules(mem_window: Any, scene: AssertScene) -> List[RuleHit]:
+    if mem_window is None:
+        return []
+    skipped = getattr(mem_window, "skipped", None)
+    if skipped is None and isinstance(mem_window, dict):
+        skipped = mem_window.get("skipped")
+    if skipped:
+        return []
+    ok = getattr(mem_window, "ok", None)
+    if ok is None and isinstance(mem_window, dict):
+        ok = mem_window.get("ok")
+    overall = getattr(mem_window, "overall", None)
+    if overall is None and isinstance(mem_window, dict):
+        overall = mem_window.get("overall") or {}
+    windows = getattr(mem_window, "windows", None)
+    if windows is None and isinstance(mem_window, dict):
+        windows = mem_window.get("windows") or []
+    hits: List[RuleHit] = []
+    if ok:
+        hits.append(
+            RuleHit(
+                id="mem_window_extracted",
+                confidence="low",
+                message=(
+                    f"已从 .mem 提取地址窗口 {overall.get('ok_count')}/"
+                    f"{overall.get('requested')}（详见 mem_window.hex）"
+                ),
+                evidence=dict(overall or {}),
+            )
+        )
+    # fault 专门提示未映射
+    fault_win = None
+    for w in windows or []:
+        role = getattr(w, "role", None) if not isinstance(w, dict) else w.get("role")
+        if role == "fault":
+            fault_win = w
+            break
+    if fault_win is not None:
+        fok = getattr(fault_win, "ok", None) if not isinstance(fault_win, dict) else fault_win.get("ok")
+        if not fok and scene.fault_addr:
+            hits.append(
+                RuleHit(
+                    id="fault_addr_unmapped",
+                    confidence="medium",
+                    message=(
+                        f"Fault address `{scene.fault_addr}` 不在 .mem 映射内"
+                        "（空页/外设/未 dump 区）"
+                    ),
+                    evidence={"fault_addr": scene.fault_addr},
+                )
+            )
+    return hits
+
+
+def _sideband_rules(sideband: Any) -> List[RuleHit]:
+    if sideband is None:
+        return []
+    skipped = getattr(sideband, "skipped", None)
+    if skipped is None and isinstance(sideband, dict):
+        skipped = sideband.get("skipped")
+    if skipped:
+        return []
+    ok = getattr(sideband, "ok", None)
+    if ok is None and isinstance(sideband, dict):
+        ok = sideband.get("ok")
+    if not ok:
+        return []
+    overall = getattr(sideband, "overall", None)
+    if overall is None and isinstance(sideband, dict):
+        overall = sideband.get("overall") or {}
+    present = list((overall or {}).get("present") or [])
+    return [
+        RuleHit(
+            id="sideband_present",
+            confidence="low",
+            message=f"旁路段已解析: {', '.join(present)}",
+            evidence=dict(overall or {}),
+        )
+    ]
 
 
 def _callback_rules(callbacks: Any) -> List[RuleHit]:

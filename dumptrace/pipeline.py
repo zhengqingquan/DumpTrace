@@ -21,12 +21,15 @@ from dumptrace.config import DumpTraceConfig
 from dumptrace.credibility import Credibility, assess_credibility
 from dumptrace.export_scene import ExportOptions, export_scene
 from dumptrace.ingest import ingest, parse_log_stat, refine_symbol_match
+from dumptrace.log_meta import parse_log_meta
 from dumptrace.mem_stack import extract_stack
 from dumptrace.mem_usage import parse_mem_usage
+from dumptrace.mem_window import extract_mem_windows
 from dumptrace.mmi_state import parse_mmi_state
 from dumptrace.ps_info import parse_ps_info
 from dumptrace.rtos_info import parse_rtos_info
 from dumptrace.rules import apply_rules, overall_confidence
+from dumptrace.sideband import parse_sideband
 from dumptrace.symbolizer import SymbolInfo, symbolize_addresses
 from dumptrace.sync_objects import parse_sync_objects
 from dumptrace.timeline import build_timeline
@@ -52,6 +55,9 @@ class AnalyzeResult:
     mmi_state: Any = None
     callbacks: Any = None
     ps_info: Any = None
+    log_meta: Any = None
+    mem_window: Any = None
+    sideband: Any = None
     warnings: List[str] = field(default_factory=list)
     export: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
@@ -155,6 +161,28 @@ def analyze(
             if msg not in warnings:
                 warnings.append(msg)
 
+    log_meta = None
+    if package.ass_path:
+        lst_ent = package.get("lst")
+        log_meta = parse_log_meta(
+            ass_path=package.ass_path,
+            armlog_dir=package.armlog_dir,
+            package_files=package.files,
+            lst_path=lst_ent.path if lst_ent else None,
+        )
+        for w in log_meta.warnings:
+            msg = f"log_meta: {w}"
+            if msg not in warnings:
+                warnings.append(msg)
+
+    sideband = None
+    if cfg.enable_sideband and package.ass_path:
+        sideband = parse_sideband(package.ass_path)
+        for w in sideband.warnings:
+            msg = f"sideband: {w}"
+            if msg not in warnings:
+                warnings.append(msg)
+
     log_stat = None
     st = package.get("log_stat")
     if st:
@@ -205,21 +233,9 @@ def analyze(
             if msg not in warnings:
                 warnings.append(msg)
 
-    rules = apply_rules(
-        scene,
-        mem_usage=mem_usage,
-        rtos_info=rtos_info,
-        sync_objects=sync_objects,
-        mmi_state=mmi_state,
-        callbacks=callbacks,
-        ps_info=ps_info,
-        timeline=timeline,
-        queue_pressure_pct=cfg.queue_pressure_pct,
-        stack_overflow_pct=cfg.stack_overflow_pct,
-    )
-
     stack = None
     callstack = None
+    mem_window = None
     if cfg.enable_mem:
         mem_ent = package.get("mem")
         mem_base = scene.mem_base or cfg.mem_base
@@ -242,8 +258,35 @@ def analyze(
                 )
                 for w in callstack.warnings:
                     warnings.append(f"callstack: {w}")
+            mem_window = extract_mem_windows(
+                mem_ent.path,
+                fault_addr=scene.fault_addr,
+                regs=scene.regs,
+                mem_base=mem_base,
+                window_bytes=cfg.mem_window_bytes,
+            )
+            for w in mem_window.warnings:
+                msg = f"mem_window: {w}"
+                if msg not in warnings:
+                    warnings.append(msg)
         else:
             warnings.append("stack: no usable .mem")
+
+    rules = apply_rules(
+        scene,
+        mem_usage=mem_usage,
+        rtos_info=rtos_info,
+        sync_objects=sync_objects,
+        mmi_state=mmi_state,
+        callbacks=callbacks,
+        ps_info=ps_info,
+        timeline=timeline,
+        log_meta=log_meta,
+        mem_window=mem_window,
+        sideband=sideband,
+        queue_pressure_pct=cfg.queue_pressure_pct,
+        stack_overflow_pct=cfg.stack_overflow_pct,
+    )
 
     if out_dir is None:
         out_dir = Path.cwd() / "out" / f"{package.dump_id}_scene"
@@ -271,6 +314,9 @@ def analyze(
             mmi_state=mmi_state,
             callbacks=callbacks,
             ps_info=ps_info,
+            log_meta=log_meta,
+            mem_window=mem_window,
+            sideband=sideband,
             warnings=warnings,
             options=ExportOptions(
                 copy_ass=cfg.copy_ass, bundle=cfg.bundle, full=cfg.full
@@ -300,6 +346,9 @@ def analyze(
         mmi_state=mmi_state,
         callbacks=callbacks,
         ps_info=ps_info,
+        log_meta=log_meta,
+        mem_window=mem_window,
+        sideband=sideband,
         warnings=warnings,
         export=export_info,
     )

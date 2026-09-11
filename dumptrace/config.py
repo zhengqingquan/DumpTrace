@@ -38,7 +38,9 @@ class DumpTraceConfig:
     timeline_windows_sec: List[int] = field(default_factory=lambda: [3, 10, 60])
     enable_timeline: bool = True
     enable_mem: bool = True
+    enable_sideband: bool = True
     mem_base: str = "0x80000000"
+    mem_window_bytes: int = 256
     code_ranges: List[str] = field(
         default_factory=lambda: ["0x60000000-0x62000000"]
     )
@@ -64,6 +66,7 @@ class DumpTraceConfig:
         strict_symbols: bool = False,
         skip_timeline: bool = False,
         skip_mem: bool = False,
+        skip_sideband: bool = False,
     ) -> "DumpTraceConfig":
         return replace(
             self,
@@ -74,6 +77,7 @@ class DumpTraceConfig:
             strict_symbols=strict_symbols or self.strict_symbols,
             enable_timeline=False if skip_timeline else self.enable_timeline,
             enable_mem=False if skip_mem else self.enable_mem,
+            enable_sideband=False if skip_sideband else self.enable_sideband,
         )
 
 
@@ -147,6 +151,7 @@ def config_from_dict(data: Dict[str, Any], source: Optional[Path] = None) -> Dum
     cred = data.get("credibility") or {}
     timeline = data.get("timeline") or {}
     mem = data.get("mem") or {}
+    sideband = data.get("sideband") or {}
     rtos = data.get("rtos") or {}
     timer_mods = data.get("timer_modules") or {}
     tl_mods = data.get("timeline_modules") or {}
@@ -165,7 +170,9 @@ def config_from_dict(data: Dict[str, Any], source: Optional[Path] = None) -> Dum
         bad_lost_pct=float(cred.get("bad_lost_pct", 15.0)),
         enable_timeline=bool(timeline.get("enable", True)),
         enable_mem=bool(mem.get("enable", True)),
+        enable_sideband=bool(sideband.get("enable", True)),
         mem_base=str(mem.get("base", "0x80000000")),
+        mem_window_bytes=int(mem.get("window_bytes", 256)),
         queue_pressure_pct=float(rtos.get("queue_pressure_pct", 80.0)),
         stack_overflow_pct=float(rtos.get("stack_overflow_pct", 90.0)),
         source_path=source,
