@@ -73,6 +73,40 @@ class TestRtosInfo(unittest.TestCase):
             # scene 自身队列字段即可触发
             self.assertTrue(any(h.id == "queue_pressure" for h in hits))
 
+    def test_repair_truncated_current_task_name(self) -> None:
+        """******** 截断行缺 ] 时，用 Current thread info 全名回补。"""
+        blob = b"""
+Current thread info:
+                ID:               0x809aba24
+                Name:             [P_receive Mqtt]
+                Tcb_Addr:         0x809aaa24
+                Queue_Name:       [Q_receive Mqtt]
+                Queue_Total:      32
+                Queue_Used:       0
+                Queue_Available:  32
+Tasks info:
+Task_ID  Name  Tcb_Addr  Current_PC  Queue_All  Queue_Avail
+0x809c18ec [P_send Mqtt]  0x809c08ec  0x8095e920  32  32  TX_SEMAPHORE_SUSP  231
+********0x809aba24 [P_receive Mqtt 0x809aaa24 231
+Stack info:
+Task_ID  Name  TotalSize  Max_Used  Available  Cur_Ptr  Start  End
+0x809c18ec [P_send Mqtt]  16380  1836  16104  0x809c4978 0x809c0a90 0x809c4a8b
+"""
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "trunc.ass"
+            path.write_bytes(blob)
+            report = parse_rtos_info(
+                path,
+                assert_thread_name="[P_receive Mqtt]",
+                assert_thread_id="0x809aba24",
+            )
+        names = {t.name for t in report.tasks}
+        self.assertIn("[P_receive Mqtt]", names)
+        self.assertNotIn("[P_receive Mqtt", names)  # 截断残名不应残留为独立项
+        cur = next(t for t in report.tasks if t.task_id == "0x809aba24")
+        self.assertEqual(cur.name, "[P_receive Mqtt]")
+        self.assertTrue(cur.is_current)
+
 
 if __name__ == "__main__":
     unittest.main()

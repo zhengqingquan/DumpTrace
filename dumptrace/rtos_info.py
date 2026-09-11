@@ -193,6 +193,56 @@ _CURRENT_QUEUE_RE = re.compile(
     r"Queue_Available:\s*(\d+)",
     re.S | re.I,
 )
+_CURRENT_THREAD_ID_NAME_RE = re.compile(
+    r"Current thread info:.*?"
+    r"ID:\s*(0x[0-9A-Fa-f]+).*?"
+    r"Name:\s*([^\r\n]+)",
+    re.S | re.I,
+)
+
+
+def _name_looks_truncated(name: str) -> bool:
+    s = (name or "").strip()
+    if not s:
+        return True
+    if s.startswith("[") and "]" not in s:
+        return True
+    if s.startswith("(") and ")" not in s:
+        return True
+    return False
+
+
+def _repair_bracket_name(name: str, text: str) -> Optional[str]:
+    """缺右括号时，在全文找 name+] 的完整形式。"""
+    s = (name or "").strip()
+    if not s.startswith("[") or "]" in s:
+        return None
+    m = re.search(re.escape(s) + r"\]", text)
+    return m.group(0) if m else None
+
+
+def _enrich_task_names(tasks: List[TaskEntry], text: str) -> None:
+    """补全 Tasks 表里被 ******** 截断的当前线程名等。"""
+    cur_id: Optional[str] = None
+    cur_name: Optional[str] = None
+    m = _CURRENT_THREAD_ID_NAME_RE.search(text)
+    if m:
+        cur_id = _norm_hex(m.group(1)) or m.group(1)
+        cur_name = m.group(2).strip() or None
+
+    for t in tasks:
+        if cur_id and cur_name and t.task_id == cur_id:
+            if t.name != cur_name and (
+                _name_looks_truncated(t.name or "")
+                or t.is_current
+                or (t.name and cur_name.startswith(t.name))
+            ):
+                t.name = cur_name
+            continue
+        if _name_looks_truncated(t.name or ""):
+            fixed = _repair_bracket_name(t.name or "", text)
+            if fixed:
+                t.name = fixed
 
 
 def _classify_timer(name: str, modules: Dict[str, List[str]]) -> List[str]:
@@ -225,6 +275,7 @@ def parse_rtos_info(
     modules = timer_modules or DEFAULT_TIMER_MODULES
 
     tasks = _parse_tasks(text)
+    _enrich_task_names(tasks, text)
     stacks = _parse_stacks(text)
     _merge_stacks(tasks, stacks)
     report.tasks = tasks
