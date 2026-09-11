@@ -8,6 +8,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from dumptrace.ass_parser import addresses_for_symbolize, parse_ass
+from dumptrace.callbacks import (
+    callback_addrs_for_symbolize,
+    enrich_callbacks_symbols,
+    parse_callbacks,
+)
 from dumptrace.callstack import (
     build_callstack_candidates,
     parse_code_ranges,
@@ -19,6 +24,7 @@ from dumptrace.ingest import ingest, parse_log_stat, refine_symbol_match
 from dumptrace.mem_stack import extract_stack
 from dumptrace.mem_usage import parse_mem_usage
 from dumptrace.mmi_state import parse_mmi_state
+from dumptrace.ps_info import parse_ps_info
 from dumptrace.rtos_info import parse_rtos_info
 from dumptrace.rules import apply_rules, overall_confidence
 from dumptrace.symbolizer import SymbolInfo, symbolize_addresses
@@ -44,6 +50,8 @@ class AnalyzeResult:
     rtos_info: Any = None
     sync_objects: Any = None
     mmi_state: Any = None
+    callbacks: Any = None
+    ps_info: Any = None
     warnings: List[str] = field(default_factory=list)
     export: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
@@ -96,7 +104,7 @@ def analyze(
 
     mem_usage = None
     if package.ass_path:
-        mem_usage = parse_mem_usage(package.ass_path)
+        mem_usage = parse_mem_usage(package.ass_path, assert_msg=scene.assert_msg)
         for w in mem_usage.warnings:
             if w not in warnings:
                 warnings.append(f"mem_usage: {w}")
@@ -118,6 +126,8 @@ def analyze(
 
     sync_objects = None
     mmi_state = None
+    callbacks = None
+    ps_info = None
     if package.ass_path:
         sync_objects = parse_sync_objects(package.ass_path)
         for w in sync_objects.warnings:
@@ -127,6 +137,21 @@ def analyze(
         mmi_state = parse_mmi_state(package.ass_path)
         for w in mmi_state.warnings:
             msg = f"mmi: {w}"
+            if msg not in warnings:
+                warnings.append(msg)
+        callbacks = parse_callbacks(
+            package.ass_path,
+            assert_addrs=addresses_for_symbolize(scene),
+        )
+        for w in callbacks.warnings:
+            msg = f"callbacks: {w}"
+            if msg not in warnings:
+                warnings.append(msg)
+        ps_info = parse_ps_info(
+            package.ass_path, queue_pressure_pct=cfg.queue_pressure_pct
+        )
+        for w in ps_info.warnings:
+            msg = f"ps: {w}"
             if msg not in warnings:
                 warnings.append(msg)
 
@@ -145,24 +170,19 @@ def analyze(
     elif credibility.level == "unknown":
         warnings.append(credibility.message)
 
-    rules = apply_rules(
-        scene,
-        mem_usage=mem_usage,
-        rtos_info=rtos_info,
-        sync_objects=sync_objects,
-        mmi_state=mmi_state,
-        queue_pressure_pct=cfg.queue_pressure_pct,
-        stack_overflow_pct=cfg.stack_overflow_pct,
-    )
     symbols: List[SymbolInfo] = []
     symbol_failed = False
 
     if package.axf_path:
-        items = addresses_for_symbolize(scene)
+        items = list(addresses_for_symbolize(scene))
+        if callbacks is not None and callbacks.ok:
+            items.extend(callback_addrs_for_symbolize(callbacks, limit=40))
         symbols, sym_warns = symbolize_addresses(
             package.axf_path, items, addr2line=cfg.addr2line
         )
         warnings.extend(sym_warns)
+        if callbacks is not None and callbacks.ok:
+            enrich_callbacks_symbols(callbacks, symbols)
         if not any(s.ok for s in symbols):
             symbol_failed = True
             warnings.append("symbolize produced no successful results")
@@ -176,6 +196,7 @@ def analyze(
             package.armlog_dir,
             keywords=cfg.timeline_keywords,
             windows_sec=cfg.timeline_windows_sec,
+            timeline_modules=cfg.timeline_modules,
         )
         if not timeline.ok:
             warnings.append(f"timeline: {timeline.error}")
@@ -183,6 +204,19 @@ def analyze(
             msg = f"timeline: {w}"
             if msg not in warnings:
                 warnings.append(msg)
+
+    rules = apply_rules(
+        scene,
+        mem_usage=mem_usage,
+        rtos_info=rtos_info,
+        sync_objects=sync_objects,
+        mmi_state=mmi_state,
+        callbacks=callbacks,
+        ps_info=ps_info,
+        timeline=timeline,
+        queue_pressure_pct=cfg.queue_pressure_pct,
+        stack_overflow_pct=cfg.stack_overflow_pct,
+    )
 
     stack = None
     callstack = None
@@ -235,6 +269,8 @@ def analyze(
             rtos_info=rtos_info,
             sync_objects=sync_objects,
             mmi_state=mmi_state,
+            callbacks=callbacks,
+            ps_info=ps_info,
             warnings=warnings,
             options=ExportOptions(
                 copy_ass=cfg.copy_ass, bundle=cfg.bundle, full=cfg.full
@@ -262,6 +298,8 @@ def analyze(
         rtos_info=rtos_info,
         sync_objects=sync_objects,
         mmi_state=mmi_state,
+        callbacks=callbacks,
+        ps_info=ps_info,
         warnings=warnings,
         export=export_info,
     )

@@ -124,6 +124,8 @@ class MemUsageReport:
     overall: Dict[str, Any] = field(default_factory=dict)
     allocated_info: Dict[str, Any] = field(default_factory=dict)
     largest_free_blocks: List[Dict[str, Any]] = field(default_factory=list)
+    leak_suspects: List[Dict[str, Any]] = field(default_factory=list)
+    fragmentation: Dict[str, Any] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -134,6 +136,8 @@ class MemUsageReport:
             "segments": [s.to_dict() for s in self.segments],
             "allocated_info": self.allocated_info,
             "largest_free_blocks": list(self.largest_free_blocks),
+            "leak_suspects": list(self.leak_suspects),
+            "fragmentation": dict(self.fragmentation),
             "warnings": list(self.warnings),
         }
 
@@ -177,7 +181,9 @@ def _top_files(counter_bytes: Dict[str, int], counter_blocks: Dict[str, int], n:
     ]
 
 
-def parse_mem_usage(path: Path) -> MemUsageReport:
+def parse_mem_usage(
+    path: Path, *, assert_msg: Optional[str] = None
+) -> MemUsageReport:
     try:
         data = path.read_bytes()
     except OSError as e:
@@ -252,12 +258,102 @@ def parse_mem_usage(path: Path) -> MemUsageReport:
         report.warnings.append("no memory usage tables found in .ass")
         return report
 
+    report.leak_suspects = _build_leak_suspects(report)
+    report.fragmentation = _build_fragmentation(report, assert_msg=assert_msg)
+
     report.ok = True
     if report.overall.get("used_pct") is not None and report.overall["used_pct"] >= 95:
         report.warnings.append(
             f"memory pressure high: used_pct={report.overall['used_pct']}%"
         )
     return report
+
+
+_ALLOC_SIZE_RE = re.compile(
+    r"(?:size|bytes?|alloc(?:ate)?)\s*[=:]?\s*(\d+)",
+    re.I,
+)
+
+
+def _extract_assert_alloc_size(assert_msg: Optional[str]) -> Optional[int]:
+    if not assert_msg:
+        return None
+    m = _ALLOC_SIZE_RE.search(assert_msg)
+    if m:
+        return int(m.group(1))
+    # 纯数字兜底：unable to allocate, 1024
+    m2 = re.search(r"allocate[^\d]{0,20}(\d{2,})", assert_msg, re.I)
+    if m2:
+        return int(m2.group(1))
+    return None
+
+
+def _build_leak_suspects(report: MemUsageReport, top_n: int = 10) -> List[Dict[str, Any]]:
+    """同文件多块 + 高占比 → 泄漏嫌疑分。"""
+    file_bytes: Dict[str, int] = defaultdict(int)
+    file_blocks: Dict[str, int] = defaultdict(int)
+    ai = report.allocated_info or {}
+    for f in ai.get("top_files") or []:
+        file_bytes[f["file"]] += int(f.get("bytes") or 0)
+        file_blocks[f["file"]] += int(f.get("blocks") or 0)
+    for s in report.segments:
+        for f in s.top_files:
+            file_bytes[f.file] += f.bytes
+            file_blocks[f.file] += f.blocks
+    total = sum(file_bytes.values()) or 1
+    suspects: List[Dict[str, Any]] = []
+    for name, nbytes in file_bytes.items():
+        blocks = file_blocks.get(name, 0)
+        share = round(100.0 * nbytes / total, 2)
+        # 多块加权 + 占比
+        score = round(share + min(40.0, blocks * 2.0), 2)
+        if blocks < 2 and share < 5:
+            continue
+        suspects.append(
+            {
+                "file": name,
+                "bytes": nbytes,
+                "blocks": blocks,
+                "share_pct": share,
+                "score": score,
+            }
+        )
+    suspects.sort(key=lambda x: (-x["score"], -x["bytes"]))
+    return suspects[:top_n]
+
+
+def _build_fragmentation(
+    report: MemUsageReport, *, assert_msg: Optional[str]
+) -> Dict[str, Any]:
+    largest = 0
+    if report.largest_free_blocks:
+        largest = int(report.largest_free_blocks[0].get("size") or 0)
+    elif report.segments:
+        largest = max((s.largest_free for s in report.segments), default=0)
+    alloc_size = _extract_assert_alloc_size(assert_msg)
+    hint = None
+    if alloc_size is not None and largest > 0:
+        if alloc_size > largest:
+            hint = (
+                f"申请 size={alloc_size} 大于最大空闲块 {largest}，"
+                f"更像真 OOM/碎片不足（而非单纯水位高）"
+            )
+        else:
+            hint = (
+                f"申请 size={alloc_size} ≤ 最大空闲块 {largest}，"
+                f"若仍分配失败需查对齐/专用池/并发"
+            )
+    elif largest > 0 and report.overall.get("avail") is not None:
+        avail = int(report.overall.get("avail") or 0)
+        if avail > 0 and largest < avail * 0.1:
+            hint = (
+                f"最大空闲块 {largest} 远小于 avail={avail}，存在明显碎片化嫌疑"
+            )
+    return {
+        "largest_free": largest,
+        "assert_alloc_size": alloc_size,
+        "hint": hint,
+    }
 
 
 def _parse_pools(text: str) -> List[PoolSummary]:
@@ -470,4 +566,17 @@ def render_mem_usage_txt(report: MemUsageReport) -> str:
         lines.append(
             f"- size={b.get('size')} {b.get('start')}-{b.get('end')} tag={b.get('tag')}"
         )
+    lines += ["", "## leak_suspects"]
+    if not report.leak_suspects:
+        lines.append("(none)")
+    for s in report.leak_suspects:
+        lines.append(
+            f"- {s.get('file')}: bytes={s.get('bytes')} blocks={s.get('blocks')} "
+            f"share={s.get('share_pct')}% score={s.get('score')}"
+        )
+    lines += ["", "## fragmentation"]
+    if not report.fragmentation:
+        lines.append("(none)")
+    else:
+        lines.append(str(report.fragmentation))
     return "\n".join(lines) + "\n"

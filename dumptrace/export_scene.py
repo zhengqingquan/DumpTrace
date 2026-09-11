@@ -53,6 +53,8 @@ def build_scene_dict(
     rtos_info: Any = None,
     sync_objects: Any = None,
     mmi_state: Any = None,
+    callbacks: Any = None,
+    ps_info: Any = None,
 ) -> Dict[str, Any]:
     return {
         "tool": {"name": "dumptrace", "version": __version__},
@@ -83,6 +85,16 @@ def build_scene_dict(
             mmi_state.to_dict()
             if mmi_state is not None and hasattr(mmi_state, "to_dict")
             else mmi_state
+        ),
+        "callbacks": (
+            callbacks.to_dict()
+            if callbacks is not None and hasattr(callbacks, "to_dict")
+            else callbacks
+        ),
+        "ps_info": (
+            ps_info.to_dict()
+            if ps_info is not None and hasattr(ps_info, "to_dict")
+            else ps_info
         ),
         "warnings": warnings,
     }
@@ -182,6 +194,18 @@ def render_scene_md(data: Dict[str, Any]) -> str:
             for b in (mu.get("largest_free_blocks") or [])[:5]:
                 lines.append(
                     f"  - size=`{b.get('size')}` `{b.get('start')}`-`{b.get('end')}`"
+                )
+        fr = mu.get("fragmentation") or {}
+        if fr.get("hint"):
+            lines.append(f"- 碎片/OOM 提示: {fr.get('hint')}")
+        suspects = mu.get("leak_suspects") or []
+        if suspects:
+            lines.append("- 泄漏嫌疑 Top：")
+            for s in suspects[:5]:
+                lines.append(
+                    f"  - `{s.get('file')}`: bytes=`{s.get('bytes')}` "
+                    f"blocks=`{s.get('blocks')}` share=`{s.get('share_pct')}`% "
+                    f"score=`{s.get('score')}`"
                 )
     elif mu:
         warn = mu.get("warnings") or "n/a"
@@ -312,6 +336,14 @@ def render_scene_md(data: Dict[str, Any]) -> str:
     lines += ["", "## 死机前时间线", ""]
     if tl.get("ok"):
         lines.append(f"- source: `{tl.get('source')}` lines={tl.get('total_lines')}")
+        if tl.get("storyline"):
+            lines.append(f"- 主故事线: {tl.get('storyline')}")
+        mods = tl.get("module_counts") or {}
+        if mods:
+            top = ", ".join(
+                f"{k}={v}" for k, v in sorted(mods.items(), key=lambda kv: -kv[1])[:8]
+            )
+            lines.append(f"- 模块分布: {top}")
         for win, evs in (tl.get("windows") or {}).items():
             lines.append(f"- window **{win}**: {len(evs)} 条关键字命中（详见 timeline.txt）")
             for e in (evs or [])[-5:]:
@@ -320,6 +352,46 @@ def render_scene_md(data: Dict[str, Any]) -> str:
         lines.append(f"- 失败: {tl.get('error')}")
     else:
         lines.append("- （未启用或未生成）")
+
+    cb = data.get("callbacks") or {}
+    lines += ["", "## 回调 / 任务栈 Entry", ""]
+    if cb.get("ok"):
+        ov = cb.get("overall") or {}
+        lines.append(
+            f"- tasks=`{ov.get('task_count')}` entries=`{ov.get('entry_count')}` "
+            f"current=`{ov.get('current_name')}` overlap=`{ov.get('overlap_count')}`"
+        )
+        cur = cb.get("current") or {}
+        for e in (cur.get("entries") or [])[:8]:
+            ovl = ",".join(e.get("overlap") or []) or "-"
+            sym = e.get("func") or ""
+            lines.append(f"  - `{e.get('addr')}` overlap=`{ovl}` {sym}")
+        lines.append("- 详见 `callbacks.txt` / `callbacks.json`")
+    elif cb:
+        lines.append(f"- {cb.get('warnings') or 'n/a'}")
+    else:
+        lines.append("- （无）")
+
+    ps = data.get("ps_info") or {}
+    lines += ["", "## PS 任务队列 / 调用栈", ""]
+    if ps.get("ok"):
+        ov = ps.get("overall") or {}
+        lines.append(
+            f"- queues=`{ov.get('queue_count')}` frames=`{ov.get('stack_frame_count')}` "
+            f"pressured=`{ov.get('pressured_count')}`"
+        )
+        for q in (ps.get("pressured") or [])[:5]:
+            lines.append(
+                f"  - `{q.get('name')}` used=`{q.get('used')}/{q.get('total')}` "
+                f"({q.get('used_pct')}%)"
+            )
+        lines.append("- 详见 `ps_info.txt`")
+    elif ps.get("skipped"):
+        lines.append("- （本包未 dump PS 段，已跳过）")
+    elif ps:
+        lines.append(f"- {ps.get('warnings') or 'n/a'}")
+    else:
+        lines.append("- （无）")
 
     st = data.get("stack") or {}
     cs = data.get("callstack") or {}
@@ -438,6 +510,8 @@ def export_scene(
     rtos_info: Any = None,
     sync_objects: Any = None,
     mmi_state: Any = None,
+    callbacks: Any = None,
+    ps_info: Any = None,
     warnings: List[str],
     options: Optional[ExportOptions] = None,
 ) -> Dict[str, Any]:
@@ -459,6 +533,8 @@ def export_scene(
         rtos_info=rtos_info,
         sync_objects=sync_objects,
         mmi_state=mmi_state,
+        callbacks=callbacks,
+        ps_info=ps_info,
         warnings=warnings,
     )
 
@@ -549,6 +625,42 @@ def export_scene(
         mp = out_dir / "mmi_state.txt"
         mp.write_text(render_mmi_state_txt(mmi_state), encoding="utf-8")
         extra_files.append(mp)
+    if callbacks is not None:
+        from dumptrace.callbacks import render_callbacks_txt
+
+        cp = out_dir / "callbacks.txt"
+        cp.write_text(render_callbacks_txt(callbacks), encoding="utf-8")
+        extra_files.append(cp)
+        cj = out_dir / "callbacks.json"
+        payload = (
+            callbacks.to_dict()
+            if hasattr(callbacks, "to_dict")
+            else callbacks
+        )
+        cj.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        extra_files.append(cj)
+    if ps_info is not None:
+        from dumptrace.ps_info import render_ps_info_txt
+
+        pp = out_dir / "ps_info.txt"
+        pp.write_text(render_ps_info_txt(ps_info), encoding="utf-8")
+        extra_files.append(pp)
+    if timeline is not None and getattr(timeline, "ok", False):
+        # 可选：按模块聚合 JSON
+        tj = out_dir / "timeline_by_module.json"
+        payload = {
+            "storyline": getattr(timeline, "storyline", ""),
+            "module_counts": getattr(timeline, "module_counts", {}),
+            "module_counts_by_window": getattr(
+                timeline, "module_counts_by_window", {}
+            ),
+        }
+        tj.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        extra_files.append(tj)
 
     evidence_dir = out_dir / "evidence"
     if options.copy_ass or options.full:
@@ -600,6 +712,10 @@ def export_scene(
                 "sync_objects.txt",
                 "sync_objects.json",
                 "mmi_state.txt",
+                "callbacks.txt",
+                "callbacks.json",
+                "ps_info.txt",
+                "timeline_by_module.json",
             ):
                 p = out_dir / name
                 if p.is_file():

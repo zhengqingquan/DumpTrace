@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Union
 
 
 from dumptrace.rtos_info import DEFAULT_TIMER_MODULES
+from dumptrace.timeline import DEFAULT_TIMELINE_MODULES
 
 
 @dataclass
@@ -45,6 +46,11 @@ class DumpTraceConfig:
     stack_overflow_pct: float = 90.0
     timer_modules: Dict[str, List[str]] = field(
         default_factory=lambda: {k: list(v) for k, v in DEFAULT_TIMER_MODULES.items()}
+    )
+    timeline_modules: Dict[str, List[str]] = field(
+        default_factory=lambda: {
+            k: list(v) for k, v in DEFAULT_TIMELINE_MODULES.items()
+        }
     )
     source_path: Optional[Path] = None
 
@@ -143,6 +149,7 @@ def config_from_dict(data: Dict[str, Any], source: Optional[Path] = None) -> Dum
     mem = data.get("mem") or {}
     rtos = data.get("rtos") or {}
     timer_mods = data.get("timer_modules") or {}
+    tl_mods = data.get("timeline_modules") or {}
 
     addr = tools.get("addr2line") or data.get("addr2line")
     kw = timeline.get("keywords")
@@ -175,6 +182,12 @@ def config_from_dict(data: Dict[str, Any], source: Optional[Path] = None) -> Dum
             if isinstance(v, list) and v:
                 merged[str(k)] = [str(x) for x in v]
         cfg.timer_modules = merged
+    if isinstance(tl_mods, dict) and tl_mods:
+        merged = {k: list(v) for k, v in DEFAULT_TIMELINE_MODULES.items()}
+        for k, v in tl_mods.items():
+            if isinstance(v, list) and v:
+                merged[str(k)] = [str(x) for x in v]
+        cfg.timeline_modules = merged
     return cfg
 
 

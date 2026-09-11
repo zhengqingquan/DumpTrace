@@ -31,3 +31,8 @@ stack_overflow_pct = 90.0
 # [timer_modules]
 # display = ["MMK", "LCD", "period", "GIF", "UI"]
 # network = ["ATC", "SIP", "NET", "MNPS"]
+
+# 时间线模块聚类词典（可扩展）
+# [timeline_modules]
+# camera = ["camera", "preview", "isp"]
+# display = ["display", "lcd", "mmi"]

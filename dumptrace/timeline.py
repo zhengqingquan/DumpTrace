@@ -30,6 +30,9 @@ class TimelineResult:
     total_lines: int = 0
     last_tick_ms: Optional[int] = None
     windows: Dict[str, List[TimelineEvent]] = field(default_factory=dict)
+    module_counts: Dict[str, int] = field(default_factory=dict)
+    module_counts_by_window: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    storyline: str = ""
     warnings: List[str] = field(default_factory=list)
     error: Optional[str] = None
 
@@ -42,9 +45,25 @@ class TimelineResult:
             "windows": {
                 k: [e.to_dict() for e in v] for k, v in self.windows.items()
             },
+            "module_counts": dict(self.module_counts),
+            "module_counts_by_window": {
+                k: dict(v) for k, v in self.module_counts_by_window.items()
+            },
+            "storyline": self.storyline,
             "warnings": self.warnings,
             "error": self.error,
         }
+
+
+# 通用模块词典（不含厂商业务专名）；可通过配置覆盖
+DEFAULT_TIMELINE_MODULES: Dict[str, List[str]] = {
+    "display": ["display", "lcd", "mmi", "ui_", "refresh", "blit", "layer"],
+    "audio": ["audio", "pcm", "voice", "ringtone", "speaker", "mic"],
+    "camera": ["camera", "preview", "isp", "dcam", "img_", "encode", "jpeg"],
+    "usb": ["usb", "ucom", "gadget"],
+    "network": ["tcp", "udp", "wifi", "wlan", "atc", "sip", "net", "http", "mqtt"],
+    "system": ["assert", "abort", "exception", "oom", "fault", "watchdog"],
+}
 
 
 _HMS_RE = re.compile(r"^(\d+):(\d+):(\d+)\.(\d+)$")
@@ -151,6 +170,7 @@ def build_timeline(
     keywords: Sequence[str],
     windows_sec: Sequence[int] = (3, 10, 60),
     max_events_per_window: int = 80,
+    timeline_modules: Optional[Dict[str, List[str]]] = None,
 ) -> TimelineResult:
     try:
         lines, source, warns = _load_trace_lines(armlog_dir)
@@ -211,7 +231,60 @@ def build_timeline(
             matched = matched[-max_events_per_window:]
         result.windows[key] = matched
 
+    _apply_module_clustering(result, timeline_modules or DEFAULT_TIMELINE_MODULES)
     return result
+
+
+def _classify_content(content: str, modules: Dict[str, List[str]]) -> List[str]:
+    cl = content.lower()
+    hit: List[str] = []
+    for mod, keys in modules.items():
+        for k in keys:
+            if k.lower() in cl:
+                hit.append(mod)
+                break
+    return hit or ["other"]
+
+
+def _apply_module_clustering(
+    result: TimelineResult, modules: Dict[str, List[str]]
+) -> None:
+    # 优先用 10s，否则用事件最多的窗口
+    prefer = None
+    if "10s" in result.windows and result.windows["10s"]:
+        prefer = "10s"
+    elif result.windows:
+        prefer = max(result.windows.keys(), key=lambda k: len(result.windows[k]))
+
+    total_counts: Dict[str, int] = {}
+    for win, evs in result.windows.items():
+        counts: Dict[str, int] = {}
+        for e in evs:
+            for mod in _classify_content(e.content, modules):
+                counts[mod] = counts.get(mod, 0) + 1
+                total_counts[mod] = total_counts.get(mod, 0) + 1
+        result.module_counts_by_window[win] = counts
+
+    result.module_counts = dict(total_counts)
+    # storyline 基于 prefer 窗口
+    win_counts = (
+        result.module_counts_by_window.get(prefer or "", {})
+        if prefer
+        else total_counts
+    )
+    if not win_counts:
+        result.storyline = "死机前时间线无关键字命中，无法概括主故事线"
+        return
+    ranked = sorted(win_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    top_mod, top_n = ranked[0]
+    second = f"，其次 {ranked[1][0]}×{ranked[1][1]}" if len(ranked) > 1 else ""
+    n_ev = len(result.windows.get(prefer or "", [])) if prefer else sum(
+        len(v) for v in result.windows.values()
+    )
+    result.storyline = (
+        f"死机前{prefer or '窗口'}约 {n_ev} 条关键字事件，"
+        f"主故事线偏 **{top_mod}**（{top_n}）{second}"
+    )
 
 
 def render_timeline_txt(tl: TimelineResult) -> str:
@@ -223,8 +296,15 @@ def render_timeline_txt(tl: TimelineResult) -> str:
         lines.append(f"# error: {tl.error}")
     for w in tl.warnings:
         lines.append(f"# warn: {w}")
+    if tl.storyline:
+        lines.append(f"# storyline: {tl.storyline}")
+    if tl.module_counts:
+        lines.append(f"# modules: {tl.module_counts}")
     for win, evs in tl.windows.items():
         lines.append(f"\n## window={win} events={len(evs)}")
+        mc = tl.module_counts_by_window.get(win) or {}
+        if mc:
+            lines.append(f"# modules_in_window={mc}")
         for e in evs:
             k = ",".join(e.matched_keywords) if e.matched_keywords else "-"
             lines.append(

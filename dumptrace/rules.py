@@ -33,6 +33,9 @@ def apply_rules(
     rtos_info: Any = None,
     sync_objects: Any = None,
     mmi_state: Any = None,
+    callbacks: Any = None,
+    ps_info: Any = None,
+    timeline: Any = None,
     *,
     queue_pressure_pct: float = 80.0,
     stack_overflow_pct: float = 90.0,
@@ -181,6 +184,143 @@ def apply_rules(
     )
     hits.extend(_sync_rules(scene, sync_objects))
     hits.extend(_mmi_rules(mmi_state))
+    hits.extend(_callback_rules(callbacks))
+    hits.extend(_ps_rules(ps_info))
+    hits.extend(_timeline_rules(timeline))
+    hits.extend(_heap_deep_rules(mem_usage))
+    return hits
+
+
+def _callback_rules(callbacks: Any) -> List[RuleHit]:
+    if callbacks is None:
+        return []
+    ok = getattr(callbacks, "ok", None)
+    if ok is None and isinstance(callbacks, dict):
+        ok = callbacks.get("ok")
+    if not ok:
+        return []
+    overall = getattr(callbacks, "overall", None)
+    if overall is None and isinstance(callbacks, dict):
+        overall = callbacks.get("overall") or {}
+    overlap = getattr(callbacks, "overlap_count", None)
+    if overlap is None and isinstance(callbacks, dict):
+        overlap = callbacks.get("overlap_count") or 0
+    hits: List[RuleHit] = [
+        RuleHit(
+            id="callback_list_present",
+            confidence="low",
+            message=(
+                f"Callback Function List：tasks=`{overall.get('task_count')}` "
+                f"entries=`{overall.get('entry_count')}` "
+                f"current=`{overall.get('current_name')}`"
+            ),
+            evidence=dict(overall or {}),
+        )
+    ]
+    if overlap:
+        hits.append(
+            RuleHit(
+                id="callback_assert_overlap",
+                confidence="medium",
+                message=f"回调/栈 Entry 与 Assert 地址重叠 {overlap} 处",
+                evidence={"overlap_count": overlap},
+            )
+        )
+    return hits
+
+
+def _ps_rules(ps_info: Any) -> List[RuleHit]:
+    if ps_info is None:
+        return []
+    skipped = getattr(ps_info, "skipped", None)
+    if skipped is None and isinstance(ps_info, dict):
+        skipped = ps_info.get("skipped")
+    if skipped:
+        return []
+    ok = getattr(ps_info, "ok", None)
+    if ok is None and isinstance(ps_info, dict):
+        ok = ps_info.get("ok")
+    if not ok:
+        return []
+    pressured = getattr(ps_info, "pressured", None)
+    if pressured is None and isinstance(ps_info, dict):
+        pressured = ps_info.get("pressured") or []
+    hits: List[RuleHit] = []
+    if pressured:
+        top = pressured[0]
+        hits.append(
+            RuleHit(
+                id="ps_queue_pressure",
+                confidence="medium",
+                message=(
+                    f"PS 队列 {top.get('name')} 使用率约 {top.get('used_pct')}%"
+                ),
+                evidence={"pressured": pressured[:8]},
+            )
+        )
+    return hits
+
+
+def _timeline_rules(timeline: Any) -> List[RuleHit]:
+    if timeline is None:
+        return []
+    ok = getattr(timeline, "ok", None)
+    if ok is None and isinstance(timeline, dict):
+        ok = timeline.get("ok")
+    if not ok:
+        return []
+    story = getattr(timeline, "storyline", None)
+    if story is None and isinstance(timeline, dict):
+        story = timeline.get("storyline") or ""
+    counts = getattr(timeline, "module_counts", None)
+    if counts is None and isinstance(timeline, dict):
+        counts = timeline.get("module_counts") or {}
+    if not story and not counts:
+        return []
+    return [
+        RuleHit(
+            id="timeline_storyline",
+            confidence="low",
+            message=story or f"时间线模块分布 {dict(counts)}",
+            evidence={"module_counts": dict(counts or {}), "storyline": story},
+        )
+    ]
+
+
+def _heap_deep_rules(mem_usage: Any) -> List[RuleHit]:
+    if mem_usage is None:
+        return []
+    frag = getattr(mem_usage, "fragmentation", None)
+    if frag is None and isinstance(mem_usage, dict):
+        frag = mem_usage.get("fragmentation") or {}
+    suspects = getattr(mem_usage, "leak_suspects", None)
+    if suspects is None and isinstance(mem_usage, dict):
+        suspects = mem_usage.get("leak_suspects") or []
+    hits: List[RuleHit] = []
+    hint = (frag or {}).get("hint") if isinstance(frag, dict) else None
+    if hint:
+        hits.append(
+            RuleHit(
+                id="heap_fragmentation",
+                confidence="medium",
+                message=hint,
+                evidence=dict(frag or {}),
+            )
+        )
+    if suspects:
+        top = suspects[0]
+        hits.append(
+            RuleHit(
+                id="leak_suspect",
+                confidence="low",
+                message=(
+                    f"堆占用嫌疑 Top：`{top.get('file')}` "
+                    f"blocks={top.get('blocks')} share={top.get('share_pct')}% "
+                    f"score={top.get('score')}"
+                ),
+                evidence={"top": suspects[:5]},
+            )
+        )
     return hits
 
 
