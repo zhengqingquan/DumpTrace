@@ -22,3 +22,12 @@ keywords = ["camera", "preview", "encode", "stream", "assert", "abort", "T_P_APP
 enable = true
 base = "0x80000000"
 code_ranges = ["0x60000000-0x62000000"]
+
+[rtos]
+queue_pressure_pct = 80.0
+stack_overflow_pct = 90.0
+
+# 定时器名子串 → 模块归类（可扩展；默认已内置 display/camera/audio/network/usb/power/system）
+# [timer_modules]
+# display = ["MMK", "LCD", "period", "GIF", "UI"]
+# network = ["ATC", "SIP", "NET", "MNPS"]

@@ -27,7 +27,14 @@ class RuleHit:
         return asdict(self)
 
 
-def apply_rules(scene: AssertScene, mem_usage: Any = None) -> List[RuleHit]:
+def apply_rules(
+    scene: AssertScene,
+    mem_usage: Any = None,
+    rtos_info: Any = None,
+    *,
+    queue_pressure_pct: float = 80.0,
+    stack_overflow_pct: float = 90.0,
+) -> List[RuleHit]:
     hits: List[RuleHit] = []
 
     fault = scene.fault_addr
@@ -130,6 +137,196 @@ def apply_rules(scene: AssertScene, mem_usage: Any = None) -> List[RuleHit]:
                     evidence=dict(overall),
                 )
             )
+
+    hits.extend(
+        _rtos_rules(
+            scene,
+            rtos_info,
+            queue_pressure_pct=queue_pressure_pct,
+            stack_overflow_pct=stack_overflow_pct,
+        )
+    )
+    return hits
+
+
+def _rtos_rules(
+    scene: AssertScene,
+    rtos_info: Any,
+    *,
+    queue_pressure_pct: float,
+    stack_overflow_pct: float,
+) -> List[RuleHit]:
+    hits: List[RuleHit] = []
+    tasks = []
+    timers = []
+    queues = []
+    module_counts: Dict[str, Any] = {}
+    if rtos_info is not None:
+        tasks = getattr(rtos_info, "tasks", None)
+        if tasks is None and isinstance(rtos_info, dict):
+            tasks = rtos_info.get("tasks") or []
+        timers = getattr(rtos_info, "timers", None)
+        if timers is None and isinstance(rtos_info, dict):
+            timers = rtos_info.get("timers") or []
+        queues = getattr(rtos_info, "queues", None)
+        if queues is None and isinstance(rtos_info, dict):
+            queues = rtos_info.get("queues") or []
+        module_counts = getattr(rtos_info, "timer_module_counts", None) or {}
+        if isinstance(rtos_info, dict) and not module_counts:
+            module_counts = rtos_info.get("timer_module_counts") or {}
+
+    def _g(obj: Any, key: str, default: Any = None) -> Any:
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+
+    # 队列压力：当前线程字段或 rtos queues
+    q_candidates: List[Dict[str, Any]] = []
+    if scene.queue_total and scene.queue_used is not None and scene.queue_total > 0:
+        pct = round(100.0 * scene.queue_used / scene.queue_total, 2)
+        q_candidates.append(
+            {
+                "name": scene.queue_name or "current",
+                "used": scene.queue_used,
+                "total": scene.queue_total,
+                "used_pct": pct,
+                "source": "current_thread",
+            }
+        )
+    for q in queues or []:
+        pct = _g(q, "used_pct")
+        if pct is None:
+            continue
+        q_candidates.append(
+            {
+                "name": _g(q, "name"),
+                "used": _g(q, "used"),
+                "total": _g(q, "total"),
+                "used_pct": float(pct),
+                "source": _g(q, "source"),
+                "task_name": _g(q, "task_name"),
+            }
+        )
+    pressured = [q for q in q_candidates if float(q["used_pct"]) >= queue_pressure_pct]
+    if pressured:
+        top = max(pressured, key=lambda x: float(x["used_pct"]))
+        hits.append(
+            RuleHit(
+                id="queue_pressure",
+                confidence="high" if float(top["used_pct"]) >= 95 else "medium",
+                message=(
+                    f"队列 {top.get('name')} 使用率约 {top.get('used_pct')}%"
+                    f"（{top.get('used')}/{top.get('total')}）"
+                ),
+                evidence={"pressured": pressured[:8], "threshold_pct": queue_pressure_pct},
+            )
+        )
+
+    if rtos_info is None:
+        return hits
+
+    # 栈将溢
+    stack_hits = []
+    for t in tasks or []:
+        pct = _g(t, "stack_used_pct")
+        if pct is None:
+            continue
+        if float(pct) >= stack_overflow_pct:
+            stack_hits.append(
+                {
+                    "name": _g(t, "name"),
+                    "task_id": _g(t, "task_id"),
+                    "stack_used_pct": pct,
+                    "stack_max_used": _g(t, "stack_max_used"),
+                    "stack_total": _g(t, "stack_total"),
+                }
+            )
+    if stack_hits:
+        top = max(stack_hits, key=lambda x: float(x["stack_used_pct"]))
+        hits.append(
+            RuleHit(
+                id="stack_near_overflow",
+                confidence="high" if float(top["stack_used_pct"]) >= 95 else "medium",
+                message=(
+                    f"线程 {top.get('name')} 栈高水位约 {top.get('stack_used_pct')}%"
+                    f"（{top.get('stack_max_used')}/{top.get('stack_total')}）"
+                ),
+                evidence={"tasks": stack_hits[:10], "threshold_pct": stack_overflow_pct},
+            )
+        )
+
+    # Assert 线程对齐 / 非运行态
+    if scene.thread_name and tasks:
+        matched = None
+        for t in tasks:
+            if _g(t, "name") == scene.thread_name:
+                matched = t
+                break
+            tid = _g(t, "task_id")
+            if scene.thread_id and tid and str(tid).lower() == str(scene.thread_id).lower():
+                matched = t
+                break
+        if matched is None:
+            hits.append(
+                RuleHit(
+                    id="assert_thread_not_running",
+                    confidence="medium",
+                    message=f"任务表中未找到 Assert 线程 {scene.thread_name}",
+                    evidence={"thread": scene.thread_name, "thread_id": scene.thread_id},
+                )
+            )
+        else:
+            status = (_g(matched, "status") or "").upper()
+            is_current = bool(_g(matched, "is_current"))
+            blocked = any(
+                k in status
+                for k in ("QUEUE_SUSP", "SEMAPHORE_SUSP", "EVENT_FLAG", "SUSPENDED", "SLEEP")
+            )
+            if blocked and not is_current:
+                hits.append(
+                    RuleHit(
+                        id="assert_thread_not_running",
+                        confidence="medium",
+                        message=(
+                            f"Assert 线程 {scene.thread_name} 在任务表中为 {status}，非运行标记"
+                        ),
+                        evidence={
+                            "thread": scene.thread_name,
+                            "status": status,
+                            "task_id": _g(matched, "task_id"),
+                        },
+                    )
+                )
+            if blocked:
+                hits.append(
+                    RuleHit(
+                        id="task_blocked",
+                        confidence="low",
+                        message=f"线程 {scene.thread_name} 状态 {status or 'unknown'}（等待/挂起类）",
+                        evidence={
+                            "thread": scene.thread_name,
+                            "status": status,
+                            "is_current": is_current,
+                        },
+                    )
+                )
+
+    # 周期定时器活跃
+    periodic = [t for t in (timers or []) if _g(t, "periodic") or int(_g(t, "re_init_ticks") or 0) > 0]
+    if periodic:
+        names = [_g(t, "name") for t in periodic[:12]]
+        hits.append(
+            RuleHit(
+                id="periodic_timer_active",
+                confidence="low",
+                message=f"存在 {len(periodic)} 个周期定时器（re_init>0），模块分布 {dict(module_counts or {})}",
+                evidence={
+                    "count": len(periodic),
+                    "sample_names": names,
+                    "module_counts": dict(module_counts or {}),
+                },
+            )
+        )
 
     return hits
 

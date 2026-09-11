@@ -8,6 +8,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 
+from dumptrace.rtos_info import DEFAULT_TIMER_MODULES
+
+
 @dataclass
 class DumpTraceConfig:
     addr2line: Optional[Path] = None
@@ -37,6 +40,11 @@ class DumpTraceConfig:
     mem_base: str = "0x80000000"
     code_ranges: List[str] = field(
         default_factory=lambda: ["0x60000000-0x62000000"]
+    )
+    queue_pressure_pct: float = 80.0
+    stack_overflow_pct: float = 90.0
+    timer_modules: Dict[str, List[str]] = field(
+        default_factory=lambda: {k: list(v) for k, v in DEFAULT_TIMER_MODULES.items()}
     )
     source_path: Optional[Path] = None
 
@@ -133,6 +141,8 @@ def config_from_dict(data: Dict[str, Any], source: Optional[Path] = None) -> Dum
     cred = data.get("credibility") or {}
     timeline = data.get("timeline") or {}
     mem = data.get("mem") or {}
+    rtos = data.get("rtos") or {}
+    timer_mods = data.get("timer_modules") or {}
 
     addr = tools.get("addr2line") or data.get("addr2line")
     kw = timeline.get("keywords")
@@ -149,6 +159,8 @@ def config_from_dict(data: Dict[str, Any], source: Optional[Path] = None) -> Dum
         enable_timeline=bool(timeline.get("enable", True)),
         enable_mem=bool(mem.get("enable", True)),
         mem_base=str(mem.get("base", "0x80000000")),
+        queue_pressure_pct=float(rtos.get("queue_pressure_pct", 80.0)),
+        stack_overflow_pct=float(rtos.get("stack_overflow_pct", 90.0)),
         source_path=source,
     )
     if isinstance(kw, list) and kw:
@@ -157,6 +169,12 @@ def config_from_dict(data: Dict[str, Any], source: Optional[Path] = None) -> Dum
         cfg.timeline_windows_sec = [int(x) for x in wins]
     if isinstance(ranges, list) and ranges:
         cfg.code_ranges = [str(x) for x in ranges]
+    if isinstance(timer_mods, dict) and timer_mods:
+        merged = {k: list(v) for k, v in DEFAULT_TIMER_MODULES.items()}
+        for k, v in timer_mods.items():
+            if isinstance(v, list) and v:
+                merged[str(k)] = [str(x) for x in v]
+        cfg.timer_modules = merged
     return cfg
 
 

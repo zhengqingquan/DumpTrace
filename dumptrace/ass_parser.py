@@ -20,6 +20,9 @@ class AssertScene:
     thread_name: Optional[str] = None
     tcb_addr: Optional[str] = None
     queue_name: Optional[str] = None
+    queue_total: Optional[int] = None
+    queue_used: Optional[int] = None
+    queue_available: Optional[int] = None
     stack_start: Optional[str] = None
     stack_end: Optional[str] = None
     mem_base: Optional[str] = None
@@ -108,6 +111,17 @@ def parse_ass(path: Path) -> AssertScene:
     scene.thread_name = _first(r"Name:\s*([A-Za-z0-9_]+)", window)
     scene.tcb_addr = _normalize_hex(_first(r"Tcb_Addr:\s*(0x[0-9A-Fa-f]+)", window))
     scene.queue_name = _first(r"Queue_Name:\s*([A-Za-z0-9_]+)", window)
+    for attr, pat in (
+        ("queue_total", r"Queue_Total:\s*(\d+)"),
+        ("queue_used", r"Queue_Used:\s*(\d+)"),
+        ("queue_available", r"Queue_Available:\s*(\d+)"),
+    ):
+        raw = _first(pat, window) or _first(pat, text)
+        if raw is not None:
+            try:
+                setattr(scene, attr, int(raw))
+            except ValueError:
+                pass
     scene.stack_start = _normalize_hex(
         _first(r"Stack_Start:\s*(0x[0-9A-Fa-f]+)", window)
     )

@@ -18,6 +18,7 @@ from dumptrace.export_scene import ExportOptions, export_scene
 from dumptrace.ingest import ingest, parse_log_stat, refine_symbol_match
 from dumptrace.mem_stack import extract_stack
 from dumptrace.mem_usage import parse_mem_usage
+from dumptrace.rtos_info import parse_rtos_info
 from dumptrace.rules import apply_rules, overall_confidence
 from dumptrace.symbolizer import SymbolInfo, symbolize_addresses
 from dumptrace.timeline import build_timeline
@@ -38,6 +39,7 @@ class AnalyzeResult:
     callstack: Any = None
     symbol_match: Any = None
     mem_usage: Any = None
+    rtos_info: Any = None
     warnings: List[str] = field(default_factory=list)
     export: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
@@ -95,6 +97,21 @@ def analyze(
             if w not in warnings:
                 warnings.append(f"mem_usage: {w}")
 
+    rtos_info = None
+    if package.ass_path:
+        rtos_info = parse_rtos_info(
+            package.ass_path,
+            assert_thread_name=scene.thread_name,
+            assert_thread_id=scene.thread_id,
+            timer_modules=cfg.timer_modules,
+            queue_pressure_pct=cfg.queue_pressure_pct,
+            stack_overflow_pct=cfg.stack_overflow_pct,
+        )
+        for w in rtos_info.warnings:
+            msg = f"rtos: {w}"
+            if msg not in warnings:
+                warnings.append(msg)
+
     log_stat = None
     st = package.get("log_stat")
     if st:
@@ -110,7 +127,13 @@ def analyze(
     elif credibility.level == "unknown":
         warnings.append(credibility.message)
 
-    rules = apply_rules(scene, mem_usage=mem_usage)
+    rules = apply_rules(
+        scene,
+        mem_usage=mem_usage,
+        rtos_info=rtos_info,
+        queue_pressure_pct=cfg.queue_pressure_pct,
+        stack_overflow_pct=cfg.stack_overflow_pct,
+    )
     symbols: List[SymbolInfo] = []
     symbol_failed = False
 
@@ -189,6 +212,7 @@ def analyze(
             stack=stack,
             callstack=callstack,
             mem_usage=mem_usage,
+            rtos_info=rtos_info,
             warnings=warnings,
             options=ExportOptions(
                 copy_ass=cfg.copy_ass, bundle=cfg.bundle, full=cfg.full
@@ -213,6 +237,7 @@ def analyze(
         callstack=callstack,
         symbol_match=package.symbol_match,
         mem_usage=mem_usage,
+        rtos_info=rtos_info,
         warnings=warnings,
         export=export_info,
     )

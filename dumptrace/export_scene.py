@@ -50,6 +50,7 @@ def build_scene_dict(
     stack: Any = None,
     callstack: Any = None,
     mem_usage: Any = None,
+    rtos_info: Any = None,
 ) -> Dict[str, Any]:
     return {
         "tool": {"name": "dumptrace", "version": __version__},
@@ -66,6 +67,11 @@ def build_scene_dict(
         "stack": stack.to_dict() if stack is not None else None,
         "callstack": callstack.to_dict() if callstack is not None else None,
         "mem_usage": mem_usage.to_dict() if mem_usage is not None and hasattr(mem_usage, "to_dict") else mem_usage,
+        "rtos_info": (
+            rtos_info.to_dict()
+            if rtos_info is not None and hasattr(rtos_info, "to_dict")
+            else rtos_info
+        ),
         "warnings": warnings,
     }
 
@@ -166,6 +172,43 @@ def render_scene_md(data: Dict[str, Any]) -> str:
                 )
     elif mu:
         warn = mu.get("warnings") or "n/a"
+        lines.append(f"- 未解析到完整表: {warn}")
+    else:
+        lines.append("- （无）")
+
+    lines += [
+        "",
+        "## 任务 / 队列 / 定时器",
+        "",
+    ]
+    ri = data.get("rtos_info") or {}
+    if ri.get("ok"):
+        ov = ri.get("overall") or {}
+        lines.append(
+            f"- tasks=`{ov.get('task_count')}` timers=`{ov.get('timer_count')}` "
+            f"(periodic=`{ov.get('periodic_timer_count')}`) "
+            f"queues=`{ov.get('queue_count')}` pressured=`{ov.get('pressured_queue_count')}` "
+            f"current=`{ov.get('current_task')}`"
+        )
+        sus = ri.get("suspicious_tasks") or []
+        if sus:
+            lines.append("- 可疑线程：")
+            for s in sus[:8]:
+                lines.append(
+                    f"  - `{s.get('name')}` ({s.get('task_id')}): "
+                    f"{', '.join(s.get('reasons') or [])}"
+                )
+        else:
+            lines.append("- 可疑线程：（无）")
+        mods = ri.get("timer_module_counts") or {}
+        if mods:
+            top_mods = ", ".join(
+                f"{k}={v}" for k, v in sorted(mods.items(), key=lambda kv: -kv[1])[:8]
+            )
+            lines.append(f"- 定时器模块分布: {top_mods}")
+        lines.append("- 详见 `tasks.txt` / `timers.txt` / `tasks.json`")
+    elif ri:
+        warn = ri.get("warnings") or "n/a"
         lines.append(f"- 未解析到完整表: {warn}")
     else:
         lines.append("- （无）")
@@ -318,6 +361,7 @@ def export_scene(
     stack: Any = None,
     callstack: Any = None,
     mem_usage: Any = None,
+    rtos_info: Any = None,
     warnings: List[str],
     options: Optional[ExportOptions] = None,
 ) -> Dict[str, Any]:
@@ -336,6 +380,7 @@ def export_scene(
         stack=stack,
         callstack=callstack,
         mem_usage=mem_usage,
+        rtos_info=rtos_info,
         warnings=warnings,
     )
 
@@ -385,6 +430,25 @@ def export_scene(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         extra_files.append(mj)
+    if rtos_info is not None:
+        from dumptrace.rtos_info import render_tasks_txt, render_timers_txt
+
+        tp = out_dir / "tasks.txt"
+        tp.write_text(render_tasks_txt(rtos_info), encoding="utf-8")
+        extra_files.append(tp)
+        tj = out_dir / "tasks.json"
+        payload = (
+            rtos_info.to_dict()
+            if hasattr(rtos_info, "to_dict")
+            else rtos_info
+        )
+        tj.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        extra_files.append(tj)
+        tip = out_dir / "timers.txt"
+        tip.write_text(render_timers_txt(rtos_info), encoding="utf-8")
+        extra_files.append(tip)
 
     evidence_dir = out_dir / "evidence"
     if options.copy_ass or options.full:
@@ -430,6 +494,9 @@ def export_scene(
                 "callstack_candidates.txt",
                 "mem_usage.txt",
                 "mem_usage.json",
+                "tasks.txt",
+                "tasks.json",
+                "timers.txt",
             ):
                 p = out_dir / name
                 if p.is_file():
