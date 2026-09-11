@@ -134,6 +134,19 @@ def _run_analyze(args: argparse.Namespace) -> int:
         if overall is not None:
             _info(f"axf_match overall={overall}")
 
+    if result.mem_usage is not None:
+        mu = result.mem_usage
+        ov = getattr(mu, "overall", None) or {}
+        if getattr(mu, "ok", False):
+            _info(
+                f"mem_usage used={ov.get('used')} total={ov.get('total')} "
+                f"avail={ov.get('avail')} used_pct={ov.get('used_pct')} "
+                f"pools={len(getattr(mu, 'pools', []) or [])} "
+                f"segments={len(getattr(mu, 'segments', []) or [])}"
+            )
+        else:
+            _warn(f"mem_usage not available: {getattr(mu, 'warnings', [])}")
+
     scene = result.scene
     _info(
         f"thread={scene.thread_name} fault={scene.fault_addr} "

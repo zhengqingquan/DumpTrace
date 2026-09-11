@@ -49,6 +49,7 @@ def build_scene_dict(
     timeline: Any = None,
     stack: Any = None,
     callstack: Any = None,
+    mem_usage: Any = None,
 ) -> Dict[str, Any]:
     return {
         "tool": {"name": "dumptrace", "version": __version__},
@@ -64,6 +65,7 @@ def build_scene_dict(
         "timeline": timeline.to_dict() if timeline is not None else None,
         "stack": stack.to_dict() if stack is not None else None,
         "callstack": callstack.to_dict() if callstack is not None else None,
+        "mem_usage": mem_usage.to_dict() if mem_usage is not None and hasattr(mem_usage, "to_dict") else mem_usage,
         "warnings": warnings,
     }
 
@@ -114,6 +116,61 @@ def render_scene_md(data: Dict[str, Any]) -> str:
         f"- Project: `{a.get('project_version')}`",
         f"- Platform: `{a.get('platform_version')}`",
         f"- Build time: `{a.get('build_time')}`",
+        "",
+        "## 内存使用",
+        "",
+    ]
+    mu = data.get("mem_usage") or {}
+    if mu.get("ok"):
+        ov = mu.get("overall") or {}
+        lines.append(
+            f"- overall: used=`{ov.get('used')}` / total=`{ov.get('total')}` "
+            f"avail=`{ov.get('avail')}` used_pct=`{ov.get('used_pct')}`% "
+            f"(source=`{ov.get('source')}`)"
+        )
+        for p in mu.get("pools") or []:
+            lines.append(
+                f"- pool **{p.get('name')}**: total=`{p.get('total')}` "
+                f"used=`{p.get('used')}` avail=`{p.get('avail')}` "
+                f"max_used=`{p.get('max_used')}` used_pct=`{p.get('used_pct')}`%"
+            )
+        segs = mu.get("segments") or []
+        if segs:
+            lines.append(f"- segments: {len(segs)}（详见 mem_usage.txt）")
+            # 按空闲少/使用多挑几条
+            pressured = sorted(
+                segs,
+                key=lambda s: (s.get("free_bytes") or 0, -(s.get("alloc_bytes") or 0)),
+            )[:5]
+            for s in pressured:
+                lines.append(
+                    f"  - [{s.get('space')}] {s.get('title')}: "
+                    f"alloc=`{s.get('alloc_bytes')}` free=`{s.get('free_bytes')}` "
+                    f"largest_free=`{s.get('largest_free')}`"
+                )
+        ai = mu.get("allocated_info") or {}
+        if ai.get("top_files"):
+            lines.append(
+                f"- Allocated memory info: count=`{ai.get('count')}` "
+                f"total_bytes=`{ai.get('total_bytes')}`；占用 Top："
+            )
+            for f in (ai.get("top_files") or [])[:8]:
+                lines.append(
+                    f"  - `{f.get('file')}`: bytes=`{f.get('bytes')}` blocks=`{f.get('blocks')}`"
+                )
+        if mu.get("largest_free_blocks"):
+            lines.append("- 最大空闲块：")
+            for b in (mu.get("largest_free_blocks") or [])[:5]:
+                lines.append(
+                    f"  - size=`{b.get('size')}` `{b.get('start')}`-`{b.get('end')}`"
+                )
+    elif mu:
+        warn = mu.get("warnings") or "n/a"
+        lines.append(f"- 未解析到完整表: {warn}")
+    else:
+        lines.append("- （无）")
+
+    lines += [
         "",
         "## 关键寄存器",
         "",
@@ -260,6 +317,7 @@ def export_scene(
     timeline: Any = None,
     stack: Any = None,
     callstack: Any = None,
+    mem_usage: Any = None,
     warnings: List[str],
     options: Optional[ExportOptions] = None,
 ) -> Dict[str, Any]:
@@ -277,6 +335,7 @@ def export_scene(
         timeline=timeline,
         stack=stack,
         callstack=callstack,
+        mem_usage=mem_usage,
         warnings=warnings,
     )
 
@@ -310,6 +369,22 @@ def export_scene(
         cp = out_dir / "callstack_candidates.txt"
         cp.write_text(render_callstack_txt(callstack), encoding="utf-8")
         extra_files.append(cp)
+    if mem_usage is not None:
+        from dumptrace.mem_usage import render_mem_usage_txt
+
+        mp = out_dir / "mem_usage.txt"
+        mp.write_text(render_mem_usage_txt(mem_usage), encoding="utf-8")
+        extra_files.append(mp)
+        mj = out_dir / "mem_usage.json"
+        payload = (
+            mem_usage.to_dict()
+            if hasattr(mem_usage, "to_dict")
+            else mem_usage
+        )
+        mj.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        extra_files.append(mj)
 
     evidence_dir = out_dir / "evidence"
     if options.copy_ass or options.full:
@@ -353,6 +428,8 @@ def export_scene(
                 "stack.bin",
                 "stack.hex",
                 "callstack_candidates.txt",
+                "mem_usage.txt",
+                "mem_usage.json",
             ):
                 p = out_dir / name
                 if p.is_file():

@@ -17,6 +17,7 @@ from dumptrace.credibility import Credibility, assess_credibility
 from dumptrace.export_scene import ExportOptions, export_scene
 from dumptrace.ingest import ingest, parse_log_stat, refine_symbol_match
 from dumptrace.mem_stack import extract_stack
+from dumptrace.mem_usage import parse_mem_usage
 from dumptrace.rules import apply_rules, overall_confidence
 from dumptrace.symbolizer import SymbolInfo, symbolize_addresses
 from dumptrace.timeline import build_timeline
@@ -36,6 +37,7 @@ class AnalyzeResult:
     stack: Any = None
     callstack: Any = None
     symbol_match: Any = None
+    mem_usage: Any = None
     warnings: List[str] = field(default_factory=list)
     export: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
@@ -86,6 +88,13 @@ def analyze(
     )
     warnings.extend(package.warnings)
 
+    mem_usage = None
+    if package.ass_path:
+        mem_usage = parse_mem_usage(package.ass_path)
+        for w in mem_usage.warnings:
+            if w not in warnings:
+                warnings.append(f"mem_usage: {w}")
+
     log_stat = None
     st = package.get("log_stat")
     if st:
@@ -101,7 +110,7 @@ def analyze(
     elif credibility.level == "unknown":
         warnings.append(credibility.message)
 
-    rules = apply_rules(scene)
+    rules = apply_rules(scene, mem_usage=mem_usage)
     symbols: List[SymbolInfo] = []
     symbol_failed = False
 
@@ -179,6 +188,7 @@ def analyze(
             timeline=timeline,
             stack=stack,
             callstack=callstack,
+            mem_usage=mem_usage,
             warnings=warnings,
             options=ExportOptions(
                 copy_ass=cfg.copy_ass, bundle=cfg.bundle, full=cfg.full
@@ -202,6 +212,7 @@ def analyze(
         stack=stack,
         callstack=callstack,
         symbol_match=package.symbol_match,
+        mem_usage=mem_usage,
         warnings=warnings,
         export=export_info,
     )

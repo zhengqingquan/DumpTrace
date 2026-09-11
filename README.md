@@ -14,7 +14,8 @@
 | ASS 异常画像 | Assert / Fault / 线程 / 寄存器 / 版本等 |
 | 符号匹配 | 文件名片段 / 编译时间 / Build ID / map 入口与摘要指纹，分项提示 |
 | 符号反查 | PC / LR / Exception → 函数、文件、行（`addr2line`） |
-| 规则判读 | 空指针偏移、Abort 类型、线程名启发式与置信度 |
+| 规则判读 | 空指针偏移、Abort 类型、线程名、OOM/内存压力启发式与置信度 |
+| 内存使用 | ASS 池 Total/Avail/Used、段 ALLOC/FREE、分配表 Top（`mem_usage.*`） |
 | Log 可信度 | 读 `*_log_stat.txt`，报告中标注丢包可信度 |
 | 时间线 | 死机前关键字事件（复用 logel2txt） |
 | MEM 栈深挖 | 栈区切片、疑似返回地址 → 候选调用栈 |
@@ -61,6 +62,7 @@ python dumptrace.py analyze dump_xxx --skip-timeline --skip-mem
 | `stack.hex` | 同上内容的十六进制可读视图 |
 | `stack_error.txt` | 栈提取失败时的原因说明（替代 stack.bin/hex） |
 | `callstack_candidates.txt` | 栈上疑似返回地址及符号候选（未 `--skip-mem` 时） |
+| `mem_usage.txt` / `mem_usage.json` | ASS 内存池/段/分配表使用摘要 |
 | `evidence/` | 可选证据目录：`--copy-ass` 拷 `.ass`；`--full` 再拷 mem/logel 等 |
 | `../<dump_id>_scene.zip` | `--bundle` 时打在 scene 目录**同级**的现场包 |
 

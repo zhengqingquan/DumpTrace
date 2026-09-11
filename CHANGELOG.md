@@ -9,6 +9,7 @@
 ### 新增
 
 - 符号匹配分项检查：`name_token`（文件名片段）、`build_time`（编译时间）、`build_id`（Project Version）、`map_checksum`（同 stem `.map` 入口点 + 摘要指纹）；CLI / `scene.md` 分别提示，overall 写入 `axf_match`。
+- 从 `.ass` 解析内存使用：System/Static 池 Total/Avail/Used、空间段 ALLOC/FREE、Allocated memory info Top；导出 `mem_usage.txt` / `mem_usage.json`，并增加 `oom_assert` / `mem_pressure` 规则。
 
 ## [0.1.0] - 2026-09-11
 

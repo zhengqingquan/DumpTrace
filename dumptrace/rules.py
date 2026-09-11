@@ -27,7 +27,7 @@ class RuleHit:
         return asdict(self)
 
 
-def apply_rules(scene: AssertScene) -> List[RuleHit]:
+def apply_rules(scene: AssertScene, mem_usage: Any = None) -> List[RuleHit]:
     hits: List[RuleHit] = []
 
     fault = scene.fault_addr
@@ -93,6 +93,43 @@ def apply_rules(scene: AssertScene) -> List[RuleHit]:
                 evidence={"hints": scene.mem_hints[:5]},
             )
         )
+
+    msg = (scene.assert_msg or "").lower()
+    if "no memory" in msg or "unable to allocate" in msg or "0x10" in msg:
+        hits.append(
+            RuleHit(
+                id="oom_assert",
+                confidence="high",
+                message="断言提示内存分配失败（No memory / unable to allocate）",
+                evidence={"assert_msg": scene.assert_msg},
+            )
+        )
+
+    overall = None
+    if mem_usage is not None:
+        overall = getattr(mem_usage, "overall", None)
+        if overall is None and isinstance(mem_usage, dict):
+            overall = mem_usage.get("overall")
+    if isinstance(overall, dict) and overall.get("used_pct") is not None:
+        pct = float(overall["used_pct"])
+        if pct >= 95:
+            hits.append(
+                RuleHit(
+                    id="mem_pressure",
+                    confidence="high",
+                    message=f"内存池使用率约 {pct}%（可用 {overall.get('avail')} / 总计 {overall.get('total')}）",
+                    evidence=dict(overall),
+                )
+            )
+        elif pct >= 85:
+            hits.append(
+                RuleHit(
+                    id="mem_pressure",
+                    confidence="medium",
+                    message=f"内存池使用率约 {pct}%，接近耗尽",
+                    evidence=dict(overall),
+                )
+            )
 
     return hits
 
