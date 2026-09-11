@@ -51,6 +51,8 @@ def build_scene_dict(
     callstack: Any = None,
     mem_usage: Any = None,
     rtos_info: Any = None,
+    sync_objects: Any = None,
+    mmi_state: Any = None,
 ) -> Dict[str, Any]:
     return {
         "tool": {"name": "dumptrace", "version": __version__},
@@ -71,6 +73,16 @@ def build_scene_dict(
             rtos_info.to_dict()
             if rtos_info is not None and hasattr(rtos_info, "to_dict")
             else rtos_info
+        ),
+        "sync_objects": (
+            sync_objects.to_dict()
+            if sync_objects is not None and hasattr(sync_objects, "to_dict")
+            else sync_objects
+        ),
+        "mmi_state": (
+            mmi_state.to_dict()
+            if mmi_state is not None and hasattr(mmi_state, "to_dict")
+            else mmi_state
         ),
         "warnings": warnings,
     }
@@ -135,8 +147,9 @@ def render_scene_md(data: Dict[str, Any]) -> str:
             f"(source=`{ov.get('source')}`)"
         )
         for p in mu.get("pools") or []:
+            kind = p.get("kind") or "main"
             lines.append(
-                f"- pool **{p.get('name')}**: total=`{p.get('total')}` "
+                f"- pool **{p.get('name')}** [{kind}]: total=`{p.get('total')}` "
                 f"used=`{p.get('used')}` avail=`{p.get('avail')}` "
                 f"max_used=`{p.get('max_used')}` used_pct=`{p.get('used_pct')}`%"
             )
@@ -210,6 +223,67 @@ def render_scene_md(data: Dict[str, Any]) -> str:
     elif ri:
         warn = ri.get("warnings") or "n/a"
         lines.append(f"- 未解析到完整表: {warn}")
+    else:
+        lines.append("- （无）")
+
+    lines += [
+        "",
+        "## 同步原语",
+        "",
+    ]
+    so = data.get("sync_objects") or {}
+    if so.get("ok"):
+        ov = so.get("overall") or {}
+        lines.append(
+            f"- mutex=`{ov.get('mutex_count')}` sem=`{ov.get('semaphore_count')}` "
+            f"event=`{ov.get('event_count')}` held=`{ov.get('held_count')}` "
+            f"waited=`{ov.get('waited_count')}`"
+        )
+        held = so.get("held_locks") or []
+        if held:
+            lines.append("- 持有中的锁：")
+            for h in held[:8]:
+                lines.append(
+                    f"  - `{h.get('name')}` owner=`{h.get('owner')}` "
+                    f"count=`{h.get('ownership_count')}`"
+                )
+        waited = so.get("waited") or []
+        if waited:
+            lines.append("- 有等待者：")
+            for w in waited[:8]:
+                lines.append(
+                    f"  - [{w.get('kind')}] `{w.get('name')}` "
+                    f"suspended=`{w.get('total_suspended')}` "
+                    f"waiters=`{w.get('waiters')}`"
+                )
+        lines.append("- 详见 `sync_objects.txt` / `sync_objects.json`")
+    elif so:
+        lines.append(f"- 未解析到完整表: {so.get('warnings') or 'n/a'}")
+    else:
+        lines.append("- （无）")
+
+    lines += [
+        "",
+        "## MMI / UI 状态",
+        "",
+    ]
+    mi = data.get("mmi_state") or {}
+    if mi.get("ok"):
+        ov = mi.get("overall") or {}
+        lines.append(
+            f"- applet=`{ov.get('current_applet_name')}` "
+            f"focus=`{ov.get('focus_window_name')}` "
+            f"(id=`{ov.get('focus_window_id')}`) "
+            f"windows=`{ov.get('window_count')}` controls=`{ov.get('control_count')}` "
+            f"anim=`{ov.get('anim_control_count')}`"
+        )
+        for c in (mi.get("anim_controls") or [])[:5]:
+            lines.append(
+                f"  - anim `{c.get('name')}` id=`{c.get('id')}` handle=`{c.get('handle')}`"
+            )
+        lines.append("- 详见 `mmi_state.txt` / 写入 scene.json 的 `mmi_state`")
+    elif mi:
+        lines.append(f"- 未解析到: {mi.get('warnings') or 'n/a'}")
     else:
         lines.append("- （无）")
 
@@ -362,6 +436,8 @@ def export_scene(
     callstack: Any = None,
     mem_usage: Any = None,
     rtos_info: Any = None,
+    sync_objects: Any = None,
+    mmi_state: Any = None,
     warnings: List[str],
     options: Optional[ExportOptions] = None,
 ) -> Dict[str, Any]:
@@ -381,6 +457,8 @@ def export_scene(
         callstack=callstack,
         mem_usage=mem_usage,
         rtos_info=rtos_info,
+        sync_objects=sync_objects,
+        mmi_state=mmi_state,
         warnings=warnings,
     )
 
@@ -449,6 +527,28 @@ def export_scene(
         tip = out_dir / "timers.txt"
         tip.write_text(render_timers_txt(rtos_info), encoding="utf-8")
         extra_files.append(tip)
+    if sync_objects is not None:
+        from dumptrace.sync_objects import render_sync_objects_txt
+
+        sp = out_dir / "sync_objects.txt"
+        sp.write_text(render_sync_objects_txt(sync_objects), encoding="utf-8")
+        extra_files.append(sp)
+        sj = out_dir / "sync_objects.json"
+        payload = (
+            sync_objects.to_dict()
+            if hasattr(sync_objects, "to_dict")
+            else sync_objects
+        )
+        sj.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        extra_files.append(sj)
+    if mmi_state is not None:
+        from dumptrace.mmi_state import render_mmi_state_txt
+
+        mp = out_dir / "mmi_state.txt"
+        mp.write_text(render_mmi_state_txt(mmi_state), encoding="utf-8")
+        extra_files.append(mp)
 
     evidence_dir = out_dir / "evidence"
     if options.copy_ass or options.full:
@@ -497,6 +597,9 @@ def export_scene(
                 "tasks.txt",
                 "tasks.json",
                 "timers.txt",
+                "sync_objects.txt",
+                "sync_objects.json",
+                "mmi_state.txt",
             ):
                 p = out_dir / name
                 if p.is_file():

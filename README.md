@@ -17,6 +17,7 @@
 | 规则判读 | 空指针偏移、Abort 类型、线程名、OOM/内存压力、队列/栈水位、周期定时器启发式 |
 | 内存使用 | ASS 池 Total/Avail/Used、段 ALLOC/FREE、分配表 Top（`mem_usage.*`） |
 | 任务/定时器/队列 | ASS 全任务表 + Stack 水位、定时器列表（模块归类）、队列使用率（`tasks.*` / `timers.txt`） |
+| 同步原语 / MMI | Mutex/Sem/Event 持有与等待（`sync_objects.*`）；MMI 窗体/控件（`mmi_state`） |
 | Log 可信度 | 读 `*_log_stat.txt`，报告中标注丢包可信度 |
 | 时间线 | 死机前关键字事件（复用 logel2txt） |
 | MEM 栈深挖 | 栈区切片、疑似返回地址 → 候选调用栈 |
@@ -67,6 +68,8 @@ python dumptrace.py analyze dump_xxx --skip-timeline --skip-mem
 | `mem_usage.txt` / `mem_usage.json` | ASS 内存池/段/分配表使用摘要 |
 | `tasks.txt` / `tasks.json` | 全任务表、栈水位、队列摘要与可疑线程 |
 | `timers.txt` | 定时器列表与模块归类 |
+| `sync_objects.txt` / `sync_objects.json` | Mutex / Sem / Event |
+| `mmi_state.txt` | MMI 窗体 / 控件 / 图层 |
 | `evidence/` | 可选证据目录：`--copy-ass` 拷 `.ass`；`--full` 再拷 mem/logel 等 |
 | `../<dump_id>_scene.zip` | `--bundle` 时打在 scene 目录**同级**的现场包 |
 

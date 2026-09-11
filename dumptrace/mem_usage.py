@@ -23,8 +23,18 @@ _POOL_HEADER_RE = re.compile(
     r"={3,}\s*([A-Za-z0-9 ]+?Space Information)\s*={3,}",
     re.I,
 )
+# 专用池：电话本 / 字库 cache 等（非 System/Static Space）
+_DEDICATED_POOL_HEADER_RE = re.compile(
+    r"={3,}\s*([A-Za-z0-9_ ]+?(?:POOL|Pool|cache|Cache) Information)\s*={3,}",
+    re.I,
+)
 _POOL_SUMMARY_RE = re.compile(
     r"(0x[0-9A-Fa-f]+)\s+(0x[0-9A-Fa-f]+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)",
+    re.I,
+)
+# 无 Threshold 列的专用池汇总
+_POOL_SUMMARY_5_RE = re.compile(
+    r"(0x[0-9A-Fa-f]+)\s+(0x[0-9A-Fa-f]+)\s+(\d+)\s+(\d+)\s+(\d+)\b",
     re.I,
 )
 _SEGMENT_RE = re.compile(
@@ -57,6 +67,7 @@ class PoolSummary:
     threshold: int = 0
     used: int = 0
     used_pct: Optional[float] = None
+    kind: str = "main"  # main / dedicated
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -180,7 +191,24 @@ def parse_mem_usage(path: Path) -> MemUsageReport:
     report.allocated_info = _parse_allocated_info(text)
     report.largest_free_blocks = _largest_free(text, limit=10)
 
-    if report.pools:
+    main_pools = [p for p in report.pools if p.kind == "main"]
+    dedicated = [p for p in report.pools if p.kind == "dedicated"]
+    if main_pools:
+        total = sum(p.total for p in main_pools)
+        avail = sum(p.avail for p in main_pools)
+        used = sum(p.used for p in main_pools)
+        report.overall = {
+            "total": total,
+            "avail": avail,
+            "used": used,
+            "used_pct": _pct(used, total),
+            "pool_count": len(main_pools),
+            "dedicated_pool_count": len(dedicated),
+            "segment_count": len(report.segments),
+            "source": "space_summary",
+        }
+    elif report.pools:
+        # 仅有专用池
         total = sum(p.total for p in report.pools)
         avail = sum(p.avail for p in report.pools)
         used = sum(p.used for p in report.pools)
@@ -189,9 +217,10 @@ def parse_mem_usage(path: Path) -> MemUsageReport:
             "avail": avail,
             "used": used,
             "used_pct": _pct(used, total),
-            "pool_count": len(report.pools),
+            "pool_count": 0,
+            "dedicated_pool_count": len(report.pools),
             "segment_count": len(report.segments),
-            "source": "space_summary",
+            "source": "dedicated_pools_only",
         }
     elif report.segments:
         total = sum(s.length for s in report.segments)
@@ -232,38 +261,61 @@ def parse_mem_usage(path: Path) -> MemUsageReport:
 
 
 def _parse_pools(text: str) -> List[PoolSummary]:
-    """解析带 Total_Num / Avail_Num / Max_Used 的空间汇总行。"""
+    """解析带 Total_Num / Avail_Num / Max_Used 的空间汇总行（含专用池）。"""
     pools: List[PoolSummary] = []
-    headers = list(_POOL_HEADER_RE.finditer(text))
-    for i, hm in enumerate(headers):
-        name = re.sub(r"\s+", " ", hm.group(1)).strip()
-        start = hm.end()
-        end = headers[i + 1].start() if i + 1 < len(headers) else min(len(text), start + 4000)
-        window = text[start:end]
-        # 只要汇总表头后的第一行数字
-        if "Total_Num" not in window and "Avail_Num" not in window:
-            continue
-        sm = _POOL_SUMMARY_RE.search(window)
-        if not sm:
-            continue
-        total = int(sm.group(3))
-        avail = int(sm.group(4))
-        max_used = int(sm.group(5))
-        threshold = int(sm.group(6))
-        used = max(0, total - avail)
-        pools.append(
-            PoolSummary(
-                name=name,
-                begin=sm.group(1).lower(),
-                end=sm.group(2).lower(),
-                total=total,
-                avail=avail,
-                max_used=max_used,
-                threshold=threshold,
-                used=used,
-                used_pct=_pct(used, total),
+    seen_ranges: set = set()
+
+    def _add_from_headers(headers: List[re.Match], kind: str) -> None:
+        for i, hm in enumerate(headers):
+            name = re.sub(r"\s+", " ", hm.group(1)).strip()
+            start = hm.end()
+            end = (
+                headers[i + 1].start()
+                if i + 1 < len(headers)
+                else min(len(text), start + 4000)
             )
-        )
+            window = text[start:end]
+            if "Total_Num" not in window and "Avail_Num" not in window:
+                continue
+            sm6 = _POOL_SUMMARY_RE.search(window)
+            sm5 = None if sm6 else _POOL_SUMMARY_5_RE.search(window)
+            sm = sm6 or sm5
+            if not sm:
+                continue
+            begin = sm.group(1).lower()
+            end_addr = sm.group(2).lower()
+            key = (begin, end_addr, name.lower())
+            if key in seen_ranges:
+                continue
+            seen_ranges.add(key)
+            total = int(sm.group(3))
+            avail = int(sm.group(4))
+            max_used = int(sm.group(5))
+            threshold = int(sm.group(6)) if sm6 else 0
+            used = max(0, total - avail)
+            # 仅 System/Static 计入主池 overall；其余 Space/POOL/cache 均作专用
+            nlow = name.lower()
+            if "system space" in nlow or "static space" in nlow:
+                resolved_kind = "main"
+            else:
+                resolved_kind = "dedicated"
+            pools.append(
+                PoolSummary(
+                    name=name,
+                    begin=begin,
+                    end=end_addr,
+                    total=total,
+                    avail=avail,
+                    max_used=max_used,
+                    threshold=threshold,
+                    used=used,
+                    used_pct=_pct(used, total),
+                    kind=resolved_kind,
+                )
+            )
+
+    _add_from_headers(list(_POOL_HEADER_RE.finditer(text)), "main")
+    _add_from_headers(list(_DEDICATED_POOL_HEADER_RE.finditer(text)), "dedicated")
     return pools
 
 
@@ -388,7 +440,7 @@ def render_mem_usage_txt(report: MemUsageReport) -> str:
         lines.append("(none)")
     for p in report.pools:
         lines.append(
-            f"- {p.name}: total={p.total} used={p.used} avail={p.avail} "
+            f"- [{p.kind}] {p.name}: total={p.total} used={p.used} avail={p.avail} "
             f"max_used={p.max_used} threshold={p.threshold} used_pct={p.used_pct} "
             f"range={p.begin}-{p.end}"
         )

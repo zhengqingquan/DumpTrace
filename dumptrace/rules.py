@@ -31,6 +31,8 @@ def apply_rules(
     scene: AssertScene,
     mem_usage: Any = None,
     rtos_info: Any = None,
+    sync_objects: Any = None,
+    mmi_state: Any = None,
     *,
     queue_pressure_pct: float = 80.0,
     stack_overflow_pct: float = 90.0,
@@ -138,6 +140,37 @@ def apply_rules(
                 )
             )
 
+    # 专用池压力
+    pools = None
+    if mem_usage is not None:
+        pools = getattr(mem_usage, "pools", None)
+        if pools is None and isinstance(mem_usage, dict):
+            pools = mem_usage.get("pools")
+    if pools:
+        dedicated_hits = []
+        for p in pools:
+            kind = p.get("kind") if isinstance(p, dict) else getattr(p, "kind", "main")
+            if kind != "dedicated":
+                continue
+            pct = p.get("used_pct") if isinstance(p, dict) else getattr(p, "used_pct", None)
+            if pct is None:
+                continue
+            if float(pct) >= 85:
+                dedicated_hits.append(p if isinstance(p, dict) else p.to_dict())
+        if dedicated_hits:
+            top = max(dedicated_hits, key=lambda x: float(x.get("used_pct") or 0))
+            hits.append(
+                RuleHit(
+                    id="dedicated_pool_pressure",
+                    confidence="high" if float(top.get("used_pct") or 0) >= 95 else "medium",
+                    message=(
+                        f"专用池 {top.get('name')} 使用率约 {top.get('used_pct')}%"
+                        f"（{top.get('used')}/{top.get('total')}）"
+                    ),
+                    evidence={"pools": dedicated_hits[:8]},
+                )
+            )
+
     hits.extend(
         _rtos_rules(
             scene,
@@ -146,7 +179,91 @@ def apply_rules(
             stack_overflow_pct=stack_overflow_pct,
         )
     )
+    hits.extend(_sync_rules(scene, sync_objects))
+    hits.extend(_mmi_rules(mmi_state))
     return hits
+
+
+def _sync_rules(scene: AssertScene, sync_objects: Any) -> List[RuleHit]:
+    if sync_objects is None:
+        return []
+    hits: List[RuleHit] = []
+
+    def _g(obj: Any, key: str, default: Any = None) -> Any:
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+
+    held = _g(sync_objects, "held_locks") or []
+    waited = _g(sync_objects, "waited") or []
+
+    if held:
+        assert_held = [
+            h
+            for h in held
+            if scene.thread_name and _g(h, "owner") == scene.thread_name
+        ]
+        sample = assert_held or held[:5]
+        owner = _g(sample[0], "owner")
+        hits.append(
+            RuleHit(
+                id="lock_held_by_X",
+                confidence="medium" if assert_held else "low",
+                message=(
+                    f"有 {len(held)} 个 Mutex 被持有"
+                    + (
+                        f"，其中 {len(assert_held)} 个由 Assert 线程 {scene.thread_name} 持有"
+                        if assert_held
+                        else f"（示例 owner={owner}）"
+                    )
+                ),
+                evidence={
+                    "held_count": len(held),
+                    "assert_held": assert_held[:8],
+                    "sample": held[:8],
+                },
+            )
+        )
+
+    if waited:
+        hits.append(
+            RuleHit(
+                id="waiters_gt_0",
+                confidence="medium",
+                message=f"有 {len(waited)} 个同步对象存在等待者（TotalSuspended/SuspendList>0）",
+                evidence={"waited": waited[:12]},
+            )
+        )
+    return hits
+
+
+def _mmi_rules(mmi_state: Any) -> List[RuleHit]:
+    if mmi_state is None:
+        return []
+    ok = getattr(mmi_state, "ok", None)
+    if ok is None and isinstance(mmi_state, dict):
+        ok = mmi_state.get("ok")
+    if not ok:
+        return []
+    overall = getattr(mmi_state, "overall", None)
+    if overall is None and isinstance(mmi_state, dict):
+        overall = mmi_state.get("overall") or {}
+    anim_n = (overall or {}).get("anim_control_count") or 0
+    applet = (overall or {}).get("current_applet_name")
+    focus = (overall or {}).get("focus_window_name")
+    if not applet and not focus and not anim_n:
+        return []
+    return [
+        RuleHit(
+            id="mmi_state_present",
+            confidence="low",
+            message=(
+                f"MMI 状态：applet=`{applet}` focus=`{focus}` "
+                f"anim_controls={anim_n}"
+            ),
+            evidence=dict(overall or {}),
+        )
+    ]
 
 
 def _rtos_rules(

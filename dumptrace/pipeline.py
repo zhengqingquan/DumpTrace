@@ -18,9 +18,11 @@ from dumptrace.export_scene import ExportOptions, export_scene
 from dumptrace.ingest import ingest, parse_log_stat, refine_symbol_match
 from dumptrace.mem_stack import extract_stack
 from dumptrace.mem_usage import parse_mem_usage
+from dumptrace.mmi_state import parse_mmi_state
 from dumptrace.rtos_info import parse_rtos_info
 from dumptrace.rules import apply_rules, overall_confidence
 from dumptrace.symbolizer import SymbolInfo, symbolize_addresses
+from dumptrace.sync_objects import parse_sync_objects
 from dumptrace.timeline import build_timeline
 
 
@@ -40,6 +42,8 @@ class AnalyzeResult:
     symbol_match: Any = None
     mem_usage: Any = None
     rtos_info: Any = None
+    sync_objects: Any = None
+    mmi_state: Any = None
     warnings: List[str] = field(default_factory=list)
     export: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
@@ -112,6 +116,20 @@ def analyze(
             if msg not in warnings:
                 warnings.append(msg)
 
+    sync_objects = None
+    mmi_state = None
+    if package.ass_path:
+        sync_objects = parse_sync_objects(package.ass_path)
+        for w in sync_objects.warnings:
+            msg = f"sync: {w}"
+            if msg not in warnings:
+                warnings.append(msg)
+        mmi_state = parse_mmi_state(package.ass_path)
+        for w in mmi_state.warnings:
+            msg = f"mmi: {w}"
+            if msg not in warnings:
+                warnings.append(msg)
+
     log_stat = None
     st = package.get("log_stat")
     if st:
@@ -131,6 +149,8 @@ def analyze(
         scene,
         mem_usage=mem_usage,
         rtos_info=rtos_info,
+        sync_objects=sync_objects,
+        mmi_state=mmi_state,
         queue_pressure_pct=cfg.queue_pressure_pct,
         stack_overflow_pct=cfg.stack_overflow_pct,
     )
@@ -213,6 +233,8 @@ def analyze(
             callstack=callstack,
             mem_usage=mem_usage,
             rtos_info=rtos_info,
+            sync_objects=sync_objects,
+            mmi_state=mmi_state,
             warnings=warnings,
             options=ExportOptions(
                 copy_ass=cfg.copy_ass, bundle=cfg.bundle, full=cfg.full
@@ -238,6 +260,8 @@ def analyze(
         symbol_match=package.symbol_match,
         mem_usage=mem_usage,
         rtos_info=rtos_info,
+        sync_objects=sync_objects,
+        mmi_state=mmi_state,
         warnings=warnings,
         export=export_info,
     )
