@@ -15,7 +15,7 @@ from dumptrace.callstack import (
 from dumptrace.config import DumpTraceConfig
 from dumptrace.credibility import Credibility, assess_credibility
 from dumptrace.export_scene import ExportOptions, export_scene
-from dumptrace.ingest import ingest, parse_log_stat, refine_axf_match
+from dumptrace.ingest import ingest, parse_log_stat, refine_symbol_match
 from dumptrace.mem_stack import extract_stack
 from dumptrace.rules import apply_rules, overall_confidence
 from dumptrace.symbolizer import SymbolInfo, symbolize_addresses
@@ -35,6 +35,7 @@ class AnalyzeResult:
     timeline: Any = None
     stack: Any = None
     callstack: Any = None
+    symbol_match: Any = None
     warnings: List[str] = field(default_factory=list)
     export: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
@@ -78,7 +79,11 @@ def analyze(
             ok=False, exit_code=1, package=package, error=f"read ass failed: {e}"
         )
 
-    refine_axf_match(package, scene.project_version)
+    refine_symbol_match(
+        package,
+        project_version=scene.project_version,
+        build_time=scene.build_time,
+    )
     warnings.extend(package.warnings)
 
     log_stat = None
@@ -196,6 +201,7 @@ def analyze(
         timeline=timeline,
         stack=stack,
         callstack=callstack,
+        symbol_match=package.symbol_match,
         warnings=warnings,
         export=export_info,
     )

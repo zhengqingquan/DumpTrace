@@ -3,10 +3,9 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -31,6 +30,7 @@ class PackageInfo:
     files: List[FileEntry] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     axf_match: Optional[bool] = None
+    symbol_match: Optional[Dict[str, Any]] = None
 
     @property
     def ass_path(self) -> Optional[Path]:
@@ -43,6 +43,13 @@ class PackageInfo:
     def axf_path(self) -> Optional[Path]:
         for f in self.files:
             if f.role == "axf" and f.usable:
+                return f.path
+        return None
+
+    @property
+    def map_path(self) -> Optional[Path]:
+        for f in self.files:
+            if f.role == "map" and f.usable:
                 return f.path
         return None
 
@@ -60,6 +67,7 @@ class PackageInfo:
             "files": [f.to_dict() for f in self.files],
             "warnings": list(self.warnings),
             "axf_match": self.axf_match,
+            "symbol_match": self.symbol_match,
         }
 
 
@@ -183,38 +191,45 @@ def ingest(
         info.axf_match = None
     else:
         add(_entry("axf", axf_path, usable=True))
+        from dumptrace.symbol_match import find_sibling_map
+
+        map_path = find_sibling_map(axf_path, [armlog_dir, root, armlog_dir.parent])
+        add(_entry("map", map_path, usable=True))
         if project_version:
-            # 粗匹配：工程名片段是否出现在 axf 文件名中
-            token = _version_token(project_version)
+            # 粗匹配保留在接入阶段；完整分项检查见 refine_symbol_match
+            from dumptrace.symbol_match import version_token
+
+            token = version_token(project_version)
             info.axf_match = bool(token and token.lower() in axf_path.name.lower())
-            if info.axf_match is False:
-                info.warnings.append(
-                    f"axf name may not match project version token '{token}': {axf_path.name}"
-                )
 
     return info
 
 
-def _version_token(project_version: str) -> str:
-    """从 Project Version 抽可用于文件名比对的片段，如 EX1234。"""
-    m = re.search(r"(CD\d+|V\d+_\d+|COM_[A-Z0-9]+)", project_version, re.I)
-    if m:
-        return m.group(1)
-    parts = re.split(r"[\\/\s]+", project_version.strip())
-    return parts[-1] if parts else project_version
+def refine_symbol_match(
+    info: PackageInfo,
+    *,
+    project_version: Optional[str],
+    build_time: Optional[str],
+) -> None:
+    """ASS 解析后：文件名 / 编译时间 / Build ID / map 校验分项比对。"""
+    from dumptrace.symbol_match import assess_symbol_match
+
+    report = assess_symbol_match(
+        axf=info.axf_path,
+        map_path=info.map_path,
+        project_version=project_version,
+        build_time=build_time,
+    )
+    info.symbol_match = report.to_dict()
+    info.axf_match = report.overall
+    for w in report.warnings:
+        if w not in info.warnings:
+            info.warnings.append(w)
 
 
+# 兼容旧名
 def refine_axf_match(info: PackageInfo, project_version: Optional[str]) -> None:
-    """ASS 解析后再做一次版本比对。"""
-    axf = info.axf_path
-    if axf is None or not project_version:
-        return
-    token = _version_token(project_version)
-    info.axf_match = bool(token and token.lower() in axf.name.lower())
-    if not info.axf_match:
-        msg = f"axf name may not match project version token '{token}': {axf.name}"
-        if msg not in info.warnings:
-            info.warnings.append(msg)
+    refine_symbol_match(info, project_version=project_version, build_time=None)
 
 
 def parse_log_stat(path: Optional[Path]) -> Optional[Dict[str, str]]:

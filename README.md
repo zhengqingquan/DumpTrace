@@ -10,8 +10,9 @@
 
 | 能力 | 说明 |
 |------|------|
-| 死机包接入 | 识别 `*_armlog` / `dump_*`，配对 `.axf`，缺 ASS 中止、缺 AXF 降级 |
+| 死机包接入 | 识别 `*_armlog` / `dump_*`，配对 `.axf`/`.map`，缺 ASS 中止、缺 AXF 降级 |
 | ASS 异常画像 | Assert / Fault / 线程 / 寄存器 / 版本等 |
+| 符号匹配 | 文件名片段 / 编译时间 / Build ID / map 入口与摘要指纹，分项提示 |
 | 符号反查 | PC / LR / Exception → 函数、文件、行（`addr2line`） |
 | 规则判读 | 空指针偏移、Abort 类型、线程名启发式与置信度 |
 | Log 可信度 | 读 `*_log_stat.txt`，报告中标注丢包可信度 |

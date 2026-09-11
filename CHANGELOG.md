@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### 新增
+
+- 符号匹配分项检查：`name_token`（文件名片段）、`build_time`（编译时间）、`build_id`（Project Version）、`map_checksum`（同 stem `.map` 入口点 + 摘要指纹）；CLI / `scene.md` 分别提示，overall 写入 `axf_match`。
+
 ## [0.1.0] - 2026-09-11
 
 ### 新增

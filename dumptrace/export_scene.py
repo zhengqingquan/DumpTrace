@@ -175,6 +175,22 @@ def render_scene_md(data: Dict[str, Any]) -> str:
     pkg = data.get("package") or {}
     lines += [
         "",
+        "## 符号匹配",
+        "",
+        f"- overall `axf_match`: `{pkg.get('axf_match')}`",
+    ]
+    sm = pkg.get("symbol_match") or data.get("symbol_match") or {}
+    checks = sm.get("checks") if isinstance(sm, dict) else None
+    if checks:
+        for c in checks:
+            lines.append(
+                f"- **{c.get('name')}**: `{c.get('status')}` — {c.get('message')}"
+            )
+    else:
+        lines.append("- （未检查）")
+
+    lines += [
+        "",
         "## 源包",
         "",
         f"- root: `{pkg.get('root')}`",

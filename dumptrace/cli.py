@@ -115,7 +115,24 @@ def _run_analyze(args: argparse.Namespace) -> int:
         return result.exit_code
 
     for w in result.warnings:
+        if str(w).startswith("symbol_check["):
+            continue
         _warn(w)
+
+    sm = result.symbol_match or (result.package.symbol_match if result.package else None)
+    if isinstance(sm, dict):
+        for c in sm.get("checks") or []:
+            name = c.get("name")
+            status = c.get("status")
+            msg = c.get("message")
+            line = f"symbol_check[{name}] {status}: {msg}"
+            if status == "mismatch":
+                _warn(line)
+            else:
+                _info(line)
+        overall = sm.get("overall")
+        if overall is not None:
+            _info(f"axf_match overall={overall}")
 
     scene = result.scene
     _info(
