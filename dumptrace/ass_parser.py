@@ -55,6 +55,38 @@ def _first(pattern: str, text: str, flags: int = 0) -> Optional[str]:
     return m.group(1).strip() if m else None
 
 
+def _parse_thread_name(window: str) -> Optional[str]:
+    """Current thread Name，允许 [P_receive Mqtt] 等；Stack Overflow 优先 Tx Name。"""
+    current = None
+    m = re.search(
+        r"Current thread info:.*?^\s*Name:\s*([^\r\n]+)",
+        window,
+        re.S | re.M | re.I,
+    )
+    if m:
+        current = m.group(1).strip() or None
+    tx = None
+    m = re.search(r"Tx Name:\s*([^\r\n,]+)", window, re.I)
+    if m:
+        tx = m.group(1).strip() or None
+    # 栈溢出断言：Tx Name 是溢出线程，比 hisr 当前上下文更有定位价值
+    if tx and re.search(r"Stack\s+Overflow", window, re.I):
+        return tx
+    return current or tx
+
+
+def _parse_queue_name(window: str) -> Optional[str]:
+    """Current thread Queue_Name，允许带括号/空格。"""
+    m = re.search(
+        r"Current thread info:.*?^\s*Queue_Name:\s*([^\r\n]+)",
+        window,
+        re.S | re.M | re.I,
+    )
+    if m:
+        return m.group(1).strip() or None
+    return _first(r"(?m)^\s*Queue_Name:\s*([^\r\n]+)", window)
+
+
 def _find_scene_window(text: str) -> str:
     """截取第一段完整异常现场，避免重复 dump 菜单干扰。"""
     markers = [
@@ -107,10 +139,13 @@ def parse_ass(path: Path) -> AssertScene:
 
     scene.thread_id = _normalize_hex(
         _first(r"ID:\s*(0x[0-9A-Fa-f]+)", window)
+        or _first(
+            r"Current thread info:.*?ID:\s*(0x[0-9A-Fa-f]+)", window, re.S | re.I
+        )
     )
-    scene.thread_name = _first(r"Name:\s*([A-Za-z0-9_]+)", window)
+    scene.thread_name = _parse_thread_name(window)
     scene.tcb_addr = _normalize_hex(_first(r"Tcb_Addr:\s*(0x[0-9A-Fa-f]+)", window))
-    scene.queue_name = _first(r"Queue_Name:\s*([A-Za-z0-9_]+)", window)
+    scene.queue_name = _parse_queue_name(window)
     for attr, pat in (
         ("queue_total", r"Queue_Total:\s*(\d+)"),
         ("queue_used", r"Queue_Used:\s*(\d+)"),

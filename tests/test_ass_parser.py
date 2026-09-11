@@ -35,6 +35,36 @@ class TestAssParser(unittest.TestCase):
         self.assertIn("data_abort", ids)
         self.assertIn("thread_hint", ids)
 
+    def test_bracketed_thread_and_queue_names(self) -> None:
+        blob = b"""
+Exception at 0x60394156
+ASSERT(Abort exception handler !)
+Abort fault(DFSR:0x00000005): Translation fault, Domain invalid !
+Fault address :0x4075b166
+Current thread info:
+                ID:               0x809aba24
+                Name:             [P_receive Mqtt]
+                Tcb_Addr:         0x809aaa24
+                Last_Err:         0x0
+                Stack_Start:      0x809aabc8
+                Stack_End:        0x809aebc3
+                Queue_Name:       [Q_receive Mqtt]
+                Queue_Total:      32
+                Queue_Used:       0
+                Queue_Available:  32
+Current status is exception, below is the registers before Exception:
+ > Current mode:
+        R0  = 0x4075b142    R1   = 0x809f08c8
+        R14 = 0x60394156    PC   = 0x60013c74
+"""
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "mqtt.ass"
+            path.write_bytes(blob)
+            scene = parse_ass(path)
+        self.assertEqual(scene.thread_name, "[P_receive Mqtt]")
+        self.assertEqual(scene.queue_name, "[Q_receive Mqtt]")
+        self.assertEqual(scene.thread_id, "0x809aba24")
+
 
 if __name__ == "__main__":
     unittest.main()

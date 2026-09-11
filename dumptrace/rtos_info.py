@@ -186,8 +186,8 @@ _TIMER_ROW_RE = re.compile(
 )
 _CURRENT_QUEUE_RE = re.compile(
     r"Current thread info:.*?"
-    r"Name:\s*([A-Za-z0-9_]+).*?"
-    r"Queue_Name:\s*([A-Za-z0-9_]+).*?"
+    r"Name:\s*([^\r\n]+).*?"
+    r"Queue_Name:\s*([^\r\n]+).*?"
     r"Queue_Total:\s*(\d+).*?"
     r"Queue_Used:\s*(\d+).*?"
     r"Queue_Available:\s*(\d+)",
@@ -399,13 +399,13 @@ def _parse_queues(text: str, tasks: List[TaskEntry]) -> List[QueueEntry]:
         total, used, avail = int(m.group(3)), int(m.group(4)), int(m.group(5))
         queues.append(
             QueueEntry(
-                name=m.group(2),
+                name=m.group(2).strip(),
                 total=total,
                 used=used,
                 available=avail,
                 used_pct=_pct(used, total),
                 source="current_thread",
-                task_name=m.group(1),
+                task_name=m.group(1).strip(),
             )
         )
     for t in tasks:
