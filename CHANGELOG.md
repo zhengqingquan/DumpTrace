@@ -6,12 +6,6 @@
 
 ## [Unreleased]
 
-### 变更
-
-- 文档与示例脱敏：去掉本机绝对路径与真实工程标识；时间线发现改为同级目录 / `DUMPTRACE_LOGEL2TXT`。
-- `logel2txt` 依赖说明统一指向 <https://github.com/zhengqingquan/logel2txt>。
-- README 与功能清单去掉 P0/P1/P2 分期，按能力重排。
-
 ## [0.1.0] - 2026-09-11
 
 ### 新增
@@ -24,4 +18,7 @@
 
 ### 变更
 
-- 对外版本号整理为 **0.1.0**（原内部标注 0.3.0）。
+- 对外版本号整理为 **0.1.0**。
+- 文档与示例脱敏：去掉本机绝对路径与真实工程标识；时间线发现改为同级目录 / `DUMPTRACE_LOGEL2TXT`。
+- `logel2txt` 依赖说明统一指向 <https://github.com/zhengqingquan/logel2txt>。
+- README 与功能清单去掉分期表述，按能力重排；输出文件说明补全。
