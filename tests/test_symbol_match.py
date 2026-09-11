@@ -25,23 +25,23 @@ def _elf32(entry: int = 0x60010000) -> bytes:
 class TestSymbolMatch(unittest.TestCase):
     def test_version_token(self) -> None:
         self.assertEqual(
-            version_token("FM255V01_160_320_H_16MB_SW_COM_CD1552"), "CD1552"
+            version_token("DEMO_V01_160_320_H_16MB_SW_COM_CD9999"), "CD9999"
         )
         self.assertEqual(version_token("DEMO_COM_EX1234"), "EX1234")
 
     def test_all_match(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            pv = "FM255V01_160_320_H_16MB_SW_COM_CD1552"
+            pv = "DEMO_V01_160_320_H_16MB_SW_COM_CD9999"
             bt = "01-21-2026 14:07:39"
-            axf = root / f"UIX8910_{pv}.axf"
+            axf = root / f"CHIP_DEMO_{pv}.axf"
             blob = _elf32(0x60010000)
             blob += (
                 f"Platform Version: MOCOR_X\nProject Version:{pv}\n"
-                f"HW Version:UIS8910FF\n{bt}\nBy RVDS V4.1\n"
+                f"HW Version:CHIP_DEMO_FF\n{bt}\nBy RVDS V4.1\n"
             ).encode("ascii")
             axf.write_bytes(blob)
-            mp = root / f"UIX8910_{pv}.map"
+            mp = root / f"CHIP_DEMO_{pv}.map"
             mp.write_text(
                 "Component: ARM Compiler Tool: armlink [4d35d2]\n"
                 "Image Entry point : 0x60010000\n"
